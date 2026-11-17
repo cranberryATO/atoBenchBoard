@@ -25,6 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 
 /* USER CODE END Includes */
 
@@ -51,12 +52,25 @@ osThreadId defaultTaskHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+static void HelloTask(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void const * argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
+
+/* Hook prototypes */
+void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
+
+/* USER CODE BEGIN 4 */
+__weak void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
+{
+   /* Run time stack overflow checking is performed if
+   configCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2. This hook function is
+   called if a stack overflow is detected. */
+}
+/* USER CODE END 4 */
 
 /**
   * @brief  FreeRTOS initialization
@@ -91,6 +105,12 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+  xTaskCreate(HelloTask,          /* task function            */
+              "hello",            /* name (debug only)        */
+              256,                /* stack size in WORDS (1 KB), printf needs room */
+              NULL,               /* argument passed to task  */
+              tskIDLE_PRIORITY + 1,
+              NULL);              /* handle (not needed here) */
   /* USER CODE END RTOS_THREADS */
 
 }
@@ -115,6 +135,18 @@ void StartDefaultTask(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+static void HelloTask(void *argument)
+{
+  (void)argument;
+  uint32_t count = 0;
+
+  for (;;)
+  {
+    printf("hello %lu\r\n", (unsigned long)count++);
+    vTaskDelay(pdMS_TO_TICKS(1000)); /* sleep 1 s, lets other tasks run */
+  }
+  /* A task must never return; if it must end, call vTaskDelete(NULL). */
+}
 
 /* USER CODE END Application */
 

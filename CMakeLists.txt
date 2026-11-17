@@ -46,12 +46,14 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${CMAKE_SOURCE_DIR}/Drivers/BSP/stm32g4xx_nucleo.c
+    ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/FreeRTOS-Plus-CLI/FreeRTOS_CLI.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ${CMAKE_SOURCE_DIR}/Drivers/BSP
+    ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/FreeRTOS-Plus-CLI/
 )
 
 # Add project symbols (macros)
