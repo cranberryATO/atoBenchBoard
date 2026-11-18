@@ -16,12 +16,20 @@ int __io_putchar(int ch) {
 
 void fatalError(const char *fmt, ...) {
   __disable_irq();
-  printf("!!!! FATAL ERROR !!!!\r\n\r\n");
+  // BSOD :D blue background, bright white text, clear screen, cursor home.
+  printf("\x1b[44m"); // background blue
+  printf("\x1b[97m"); // text white
+  // printf("\x1b[2J");  // clear screen
+  // printf("\x1b[H"); // cursor on top left
+  printf("\r\n  :(\r\n\r\n");
+  printf("  Your MCU ran into a problem and needs to restart.\r\n\r\n");
+  printf("  !!!! FATAL ERROR !!!!\r\n\r\n  ");
   va_list args;
   va_start(args, fmt);
   vprintf(fmt, args);
   va_end(args);
   printf("\r\n\r\n");
+  fflush(stdout);
   while (1) {
   }
 }
