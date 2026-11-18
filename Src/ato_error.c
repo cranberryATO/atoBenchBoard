@@ -16,10 +16,12 @@ int __io_putchar(int ch) {
 
 void fatalError(const char *fmt, ...) {
   __disable_irq();
+  printf("!!!! FATAL ERROR !!!!\r\n\r\n");
   va_list args;
   va_start(args, fmt);
   vprintf(fmt, args);
   va_end(args);
+  printf("\r\n\r\n");
   while (1) {
   }
 }

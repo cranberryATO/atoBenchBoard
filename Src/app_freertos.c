@@ -49,7 +49,7 @@ void tx_bytes(const uint8_t *data, uint16_t len);
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define APP_RX_SIZE 256
-#define APP_TX_SIZE 512
+#define APP_TX_SIZE 1024 // must hold a full CLI outBuf (512) + echo
 _Static_assert((APP_RX_SIZE & (APP_RX_SIZE - 1)) == 0,
                "APP_RX_SIZE must be a power of 2");
 _Static_assert((APP_TX_SIZE & (APP_TX_SIZE - 1)) == 0,
@@ -65,7 +65,7 @@ static inline u32 app_tx_mask(u32 x) { return x & (APP_TX_SIZE - 1); }
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-static uint8_t app_tx_buf[512];
+static uint8_t app_tx_buf[APP_TX_SIZE];
 static volatile u32 app_tx_head = 0;
 static volatile u32 app_tx_tail = 0;
 static volatile u32 tx_inflight = 0;
@@ -74,6 +74,14 @@ static u32 tx_dropped_bytes = 0;
 static u8 app_rx_buf[APP_RX_SIZE];
 static volatile u32 app_rx_head = 0;
 static u32 app_rx_tail = 0;
+static volatile u8 rx_restarted = 0; // set by ISR when RX DMA restarts at 0
+
+static TaskHandle_t cliTaskHandle = NULL;
+
+// error counters (written in ISR, read by the "stats" command)
+static volatile u32 uart_rx_errors = 0;
+static volatile u32 uart_tx_errors = 0;
+static volatile u32 uart_rx_restart_failures = 0;
 
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
@@ -125,8 +133,8 @@ static const CLI_Command_Definition_t xTasksCommand = {
 
 static BaseType_t prvStackOverflow(char *pcWriteBuffer, size_t xWriteBufferLen,
                                    const char *pcCommandString) {
-  int onStack[20];
-  for (int i = 0; i < 200; i++) {
+  int onStack[512];
+  for (int i = 0; i < 512; i++) {
     onStack[i] = 0xbaadfeed;
   }
   memcpy(pcWriteBuffer, onStack, xWriteBufferLen);
@@ -135,6 +143,24 @@ static BaseType_t prvStackOverflow(char *pcWriteBuffer, size_t xWriteBufferLen,
 
 static const CLI_Command_Definition_t xStackOverflowCommand = {
     "so", "\r\nso:\r\n Stack Overflow\r\n\r\n", prvStackOverflow, 0};
+
+static BaseType_t prvStatsCommand(char *pcWriteBuffer, size_t xWriteBufferLen,
+                                  const char *pcCommandString) {
+  (void)pcCommandString;
+  snprintf(pcWriteBuffer, xWriteBufferLen,
+           "tx dropped bytes : %lu\r\n"
+           "uart rx errors   : %lu\r\n"
+           "uart tx errors   : %lu\r\n"
+           "rx restart fails : %lu\r\n",
+           (unsigned long)tx_dropped_bytes, (unsigned long)uart_rx_errors,
+           (unsigned long)uart_tx_errors,
+           (unsigned long)uart_rx_restart_failures);
+  return pdFALSE;
+}
+
+static const CLI_Command_Definition_t xStatsCommand = {
+    "stats", "\r\nstats:\r\n Show UART error and drop counters\r\n\r\n",
+    prvStatsCommand, 0};
 
 /* USER CODE END 4 */
 
@@ -173,9 +199,10 @@ void MX_FREERTOS_Init(void) {
   /* add threads, ... */
   xTaskCreate(CliTask, /* task function            */
               "CLI",   /* name (debug only)        */
-              256,     /* stack size in WORDS (1 KB), printf needs room */
+              512,     /* stack size in WORDS (2 KB): vTaskList/snprintf */
               NULL,    /* argument passed to task  */
-              tskIDLE_PRIORITY + 1, NULL); /* handle (not needed here) */
+              tskIDLE_PRIORITY + 1,
+              &cliTaskHandle); /* used by the UART ISR to wake the task */
   /* USER CODE END RTOS_THREADS */
 }
 
@@ -202,14 +229,28 @@ static void CliTask(void *argument) {
   uint32_t count = 0;
   // Init USART1
   printf("hello %lu\r\n", (unsigned long)count++);
-  HAL_UARTEx_ReceiveToIdle_DMA(&huart1, app_rx_buf, APP_RX_SIZE);
   FreeRTOS_CLIRegisterCommand(&xTasksCommand);
   FreeRTOS_CLIRegisterCommand(&xStackOverflowCommand);
+  FreeRTOS_CLIRegisterCommand(&xStatsCommand);
+  if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, app_rx_buf, APP_RX_SIZE) !=
+      HAL_OK) {
+    fatalError("USART1 RX DMA start failed\r\n");
+  }
   for (;;) {
-    // application : read buffer
-    u32 head_snapshot =
-        app_rx_head; // app_rx_head is modified by interrupt, work on copy
-    if (head_snapshot != app_rx_tail) {
+    // Snapshot head and handle an RX restart atomically w.r.t. the UART/DMA
+    // ISRs (priority 5 == configMAX_SYSCALL_INTERRUPT_PRIORITY, so masked).
+    taskENTER_CRITICAL();
+    if (rx_restarted) {
+      rx_restarted = 0;
+      app_rx_tail = 0; // DMA restarted writing at index 0
+    }
+    u32 head_snapshot = app_rx_head;
+    taskEXIT_CRITICAL();
+
+    if (head_snapshot == app_rx_tail) {
+      // nothing to do: sleep until the RX ISR notifies us
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    } else {
       if (head_snapshot < app_rx_tail) {
         // process from tail to end of buffer
         app_rx_tail +=
@@ -262,43 +303,66 @@ void tx_bytes(const uint8_t *data, uint16_t len) {
 
 void tx_string(char *str) { tx_bytes((u8 *)str, strlen(str)); }
 
-void echo(const u8 *bytes, u16 size) {
-  static u8 newline = '\n';
-  static int last_char_cr = 0;
-  for (int i = 0; i < size; i++) {
-    if (!(last_char_cr && bytes[i] == '\n')) {
-      tx_bytes(&bytes[i], 1);
-    }
-    last_char_cr = bytes[i] == '\r';
-    if (last_char_cr) {
-      tx_bytes(&newline, 1);
-    }
-  }
+static void cli_run(const char *command) {
+  static char outBuf[512];
+  BaseType_t more;
+  do {
+    more = FreeRTOS_CLIProcessCommand(command, outBuf, sizeof(outBuf));
+    tx_string(outBuf);
+  } while (more != pdFALSE);
 }
 
+// Line editor: echo, end of line (\r, \n or \r\n), backspace, overlong lines.
 u32 app_rx_bytes(uint8_t *bytes, size_t size) {
   static char commandBuf[100];
   static size_t commandBufIdx = 0;
-  static char outBuf[512];
-  echo(bytes, size);
-  for (int i = 0; i < size; i++) {
-    if (commandBufIdx >= sizeof(commandBuf) - 1) {
-      tx_string("Error : command too long.\n");
-      commandBufIdx = 0;
-    } else {
-      if (bytes[i] == '\r') {
-        commandBuf[commandBufIdx] = 0;
-        BaseType_t more;
-        do {
-          more = FreeRTOS_CLIProcessCommand(commandBuf, outBuf, sizeof(outBuf));
-          tx_string(outBuf);
-        } while (more != pdFALSE);
-        commandBufIdx = 0;
-      } else {
-        commandBuf[commandBufIdx] = bytes[i];
-        commandBufIdx++;
+  static u8 discard = 0;      // line too long: ignore until end of line
+  static u8 last_char_cr = 0; // swallow the \n of a \r\n pair
+
+  for (size_t i = 0; i < size; i++) {
+    u8 c = bytes[i];
+
+    if (c == '\r' || c == '\n') {
+      u8 is_lf_after_cr = (c == '\n') && last_char_cr;
+      last_char_cr = (c == '\r');
+      if (is_lf_after_cr) {
+        continue; // second half of \r\n, line already handled
       }
+      tx_string("\r\n");
+      if (!discard && commandBufIdx > 0) {
+        commandBuf[commandBufIdx] = 0;
+        cli_run(commandBuf);
+      }
+      commandBufIdx = 0;
+      discard = 0;
+      continue;
     }
+    last_char_cr = 0;
+
+    if (discard) {
+      continue;
+    }
+
+    if (c == 0x7f || c == '\b') { // DEL (most terminals) or BS
+      if (commandBufIdx > 0) {
+        commandBufIdx--;
+        tx_string("\b \b"); // erase the character on screen
+      }
+      continue;
+    }
+
+    if (c < 0x20) {
+      continue; // ignore other control characters (no echo)
+    }
+
+    if (commandBufIdx >= sizeof(commandBuf) - 1) {
+      tx_string("\r\nError: command too long, line ignored.\r\n");
+      discard = 1;
+      continue;
+    }
+
+    commandBuf[commandBufIdx++] = (char)c;
+    tx_bytes(&c, 1); // echo
   }
   return size;
 }
@@ -315,6 +379,9 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
   if (huart->Instance == USART1) {
     app_rx_head = app_rx_mask(size); // size is the position of the next
                                      // write in range [1..buffer_size]
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR(cliTaskHandle, &woken);
+    portYIELD_FROM_ISR(woken);
   }
 }
 
@@ -322,14 +389,26 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
   /* overrun, bruit, framing : sans relance, la réception reste bloquée */
   if (huart->Instance == USART1) {
     if (huart->gState == HAL_UART_STATE_READY && tx_inflight) {
+      uart_tx_errors++;
       app_tx_tail =
           app_tx_mask(app_tx_tail + tx_inflight); // drop current inflight
       tx_inflight = 0;
       _tx_next_chunk();
     }
 
-    if (huart->RxState == HAL_UART_STATE_READY)
-      HAL_UARTEx_ReceiveToIdle_DMA(&huart1, app_rx_buf, APP_RX_SIZE);
+    if (huart->RxState == HAL_UART_STATE_READY) {
+      uart_rx_errors++;
+      // DMA restarts writing at index 0: tell the task to resync its tail
+      app_rx_head = 0;
+      rx_restarted = 1;
+      if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, app_rx_buf, APP_RX_SIZE) !=
+          HAL_OK) {
+        uart_rx_restart_failures++;
+      }
+      BaseType_t woken = pdFALSE;
+      vTaskNotifyGiveFromISR(cliTaskHandle, &woken);
+      portYIELD_FROM_ISR(woken);
+    }
   }
 }
 
