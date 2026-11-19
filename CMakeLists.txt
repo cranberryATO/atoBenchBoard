@@ -47,6 +47,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/FreeRTOS-Plus-CLI/FreeRTOS_CLI.c
     ${CMAKE_SOURCE_DIR}/Src/ato_error.c
+    ${CMAKE_SOURCE_DIR}/Src/ato_cli.c
 )
 
 # Add include paths
