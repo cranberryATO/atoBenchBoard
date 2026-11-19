@@ -31,7 +31,7 @@
 
 #include "ato_cli_core.h"
 
-#include "task.h" // configASSERT() uses taskDISABLE_INTERRUPTS()
+#include "task.h" // taskENTER_CRITICAL(); configASSERT() uses taskDISABLE_INTERRUPTS()
 #include <string.h>
 
 static BaseType_t help_command(ato_cli_core_t *cli, char *out, size_t out_len,
@@ -58,37 +58,29 @@ void ato_cli_core_init(ato_cli_core_t *cli, void *user) {
 }
 /*-----------------------------------------------------------*/
 
-void ato_cli_core_register_static(ato_cli_core_t *cli,
-                                  const ato_cli_command_t *def,
-                                  ato_cli_list_item_t *item) {
+void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
+                           ato_cli_list_item_t *item) {
   configASSERT(cli != NULL);
   configASSERT(def != NULL);
   configASSERT(item != NULL);
 
-  /* Reference the command being registered from the list item. */
-  item->def = def;
+  /* Commands may be registered from any task, while the owner task walks the
+   * list (process / help): the append must be atomic for that reader, and
+   * protects `last` against concurrent registrations. */
+  taskENTER_CRITICAL();
+  {
+    /* Reference the command being registered from the list item. */
+    item->def = def;
 
-  /* The new list item is appended to the end of the list. */
-  item->next = NULL;
-  cli->last->next = item;
-  cli->last = item;
-}
-/*-----------------------------------------------------------*/
-
-BaseType_t ato_cli_core_register(ato_cli_core_t *cli,
-                                 const ato_cli_command_t *def) {
-  configASSERT(def != NULL);
-
-  ato_cli_list_item_t *item = pvPortMalloc(sizeof(ato_cli_list_item_t));
-  configASSERT(item != NULL);
-
-  if (item == NULL) {
-    return pdFAIL;
+    /* The new list item is appended to the end of the list. */
+    item->next = NULL;
+    cli->last->next = item;
+    cli->last = item;
   }
-  ato_cli_core_register_static(cli, def, item);
-  return pdPASS;
+  taskEXIT_CRITICAL();
 }
 /*-----------------------------------------------------------*/
+
 
 BaseType_t ato_cli_core_process(ato_cli_core_t *cli, const char *input,
                                 char *out, size_t out_len) {

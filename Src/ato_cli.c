@@ -192,8 +192,7 @@ ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
   ato_cli_core_init(&ctx->cli, ctx);
   // list items live in the context: no extra allocation that could fail
   for (size_t i = 0; i < COUNT_OF(cli_commands); i++) {
-    ato_cli_core_register_static(&ctx->cli, &cli_commands[i],
-                                 &ctx->cmd_items[i]);
+    ato_cli_core_register(&ctx->cli, &cli_commands[i], &ctx->cmd_items[i]);
   }
 
   if (xTaskCreate(cli_task, task_name, CLI_STACK_WORDS, ctx, CLI_PRIORITY,
@@ -201,4 +200,10 @@ ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
     fatalError("Task creation failed for task %s", task_name);
   }
   return ctx;
+}
+
+void ato_cli_register_command(ato_cli_ctx_t *ctx, const ato_cli_command_t *def,
+                              ato_cli_list_item_t *item) {
+  configASSERT(ctx != NULL);
+  ato_cli_core_register(&ctx->cli, def, item);
 }

@@ -79,19 +79,15 @@ struct ato_cli_core {
 /** Initialise an interpreter: empty command list (except "help"). */
 void ato_cli_core_init(ato_cli_core_t *cli, void *user);
 
-/*
- * Registration follows the same rule as ato_cli_core_process(): it must be
- * done by the task that owns the context, or before that task starts.
+/**
+ * Register a command, using a caller-provided list item (no allocation).
+ * Can be called from any task, at any time, even while the owner task is
+ * running commands (not from an ISR). `def` and `item` must stay valid for
+ * the lifetime of the interpreter (typically static / const). An item links
+ * one command into one interpreter: use one item per (command, interpreter).
  */
-
-/** Register a command; the list item is allocated with pvPortMalloc(). */
-BaseType_t ato_cli_core_register(ato_cli_core_t *cli,
-                                 const ato_cli_command_t *def);
-
-/** Register a command using a caller-provided list item. */
-void ato_cli_core_register_static(ato_cli_core_t *cli,
-                                  const ato_cli_command_t *def,
-                                  ato_cli_list_item_t *item);
+void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
+                           ato_cli_list_item_t *item);
 
 /**
  * Run the command line `input`, writing output into `out` (`out_len` bytes).
