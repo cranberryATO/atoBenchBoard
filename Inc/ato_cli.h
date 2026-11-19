@@ -1,25 +1,21 @@
 #ifndef ATO_CLI_H
 #define ATO_CLI_H
 
-#include <stdint.h>
+#include "main.h"
+
+/** CLI instance context (opaque). */
+typedef struct ato_cli_ctx ato_cli_ctx_t;
 
 /**
- * @brief  CLI task entry point (FreeRTOS+CLI over USART1, DMA RX/TX).
- *         Create it with xTaskCreate(); a stack of 512 words is needed
- *         by vTaskList()/snprintf().
+ * @brief  Create a CLI task on `huart` (FreeRTOS command interpreter with a
+ *         line editor). The context is allocated on the FreeRTOS heap and
+ *         passed to the task; each instance has its own command list.
+ * @param  huart      UART with RX (circular) and TX DMA, see ato_uart.h.
+ *                    A UART can only be used by one CLI.
+ * @param  task_name  FreeRTOS task name (shown by the "ps" command).
+ * @retval The new context. Never NULL, task creation failure will call fatalError().
  */
-void ato_cli_task(void *argument);
-
-/**
- * @brief  Queue bytes for transmission on USART1 (non-blocking).
- *         Bytes that do not fit in the TX ring buffer are dropped and
- *         counted (see the "stats" command).
- */
-void tx_bytes(const uint8_t *data, uint16_t len);
-
-/**
- * @brief  Queue a null-terminated string for transmission on USART1.
- */
-void tx_string(char *str);
+ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
+                                   const char *task_name);
 
 #endif /* ATO_CLI_H */

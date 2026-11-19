@@ -3,46 +3,45 @@
 #include "FreeRTOS.h"
 #include "ato_cli_core.h"
 #include "ato_error.h"
+#include "ato_uart.h"
 #include "task.h"
-#include "usart.h"
 #include <stdio.h>
 #include <string.h>
 
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
+#define CLI_CMD_SIZE 100    // max command line length, null included
+#define CLI_STACK_WORDS 512 // 2 KB: vTaskList/snprintf
+#define CLI_PRIORITY (tskIDLE_PRIORITY + 1)
 
-#define APP_RX_SIZE 256
-#define APP_TX_SIZE 1024 // must hold a full CLI outBuf (512) + echo
-_Static_assert((APP_RX_SIZE & (APP_RX_SIZE - 1)) == 0,
-               "APP_RX_SIZE must be a power of 2");
-_Static_assert((APP_TX_SIZE & (APP_TX_SIZE - 1)) == 0,
-               "APP_TX_SIZE must be a power of 2");
+#define COUNT_OF(table) (sizeof(table) / sizeof(table[0]))
 
-static inline u32 app_rx_mask(u32 x) { return x & (APP_RX_SIZE - 1); }
-static inline u32 app_tx_mask(u32 x) { return x & (APP_TX_SIZE - 1); }
+static BaseType_t prvTaskStatsCommand(ato_cli_core_t *cli, char *pcWriteBuffer,
+                                      size_t xWriteBufferLen,
+                                      const char *pcCommandString);
+static BaseType_t prvStackOverflow(ato_cli_core_t *cli, char *pcWriteBuffer,
+                                   size_t xWriteBufferLen,
+                                   const char *pcCommandString);
+static BaseType_t prvStatsCommand(ato_cli_core_t *cli, char *pcWriteBuffer,
+                                  size_t xWriteBufferLen,
+                                  const char *pcCommandString);
 
-static uint8_t app_tx_buf[APP_TX_SIZE];
-static volatile u32 app_tx_head = 0;
-static volatile u32 app_tx_tail = 0;
-static volatile u32 tx_inflight = 0;
-static u32 tx_dropped_bytes = 0;
+static const ato_cli_command_t cli_commands[] = {
+    {"ps", "\r\nps:\r\n Show FreeRTOS Tasks\r\n\r\n", prvTaskStatsCommand, 0},
+    {"so", "\r\nso:\r\n Stack Overflow\r\n\r\n", prvStackOverflow, 0},
+    {"stats", "\r\nstats:\r\n Show UART error and drop counters\r\n\r\n",
+     prvStatsCommand, 0}};
 
-static u8 app_rx_buf[APP_RX_SIZE];
-static volatile u32 app_rx_head = 0;
-static u32 app_rx_tail = 0;
-static volatile u8 rx_restarted = 0; // set by ISR when RX DMA restarts at 0
+struct ato_cli_ctx {
+  ato_uart_t uart;    // byte stream
+  ato_cli_core_t cli; // command interpreter, its user pointer is this ctx
+  ato_cli_list_item_t
+      cmd_items[COUNT_OF(cli_commands)]; // one per registered command
 
-static ato_cli_core_t s_cli; // command interpreter context
-
-static TaskHandle_t cliTaskHandle = NULL; // used by the UART ISR to wake the task
-
-// error counters (written in ISR, read by the "stats" command)
-static volatile u32 uart_rx_errors = 0;
-static volatile u32 uart_tx_errors = 0;
-static volatile u32 uart_rx_restart_failures = 0;
-
-static u32 app_rx_bytes(uint8_t *bytes, size_t size);
+  // line editor state
+  char cmd_buf[CLI_CMD_SIZE];
+  size_t cmd_idx;
+  uint8_t discard;      // line too long: ignore until end of line
+  uint8_t last_char_cr; // swallow the \n of a \r\n pair
+};
 
 /* CLI commands ------------------------------------------------------------- */
 
@@ -67,9 +66,6 @@ static BaseType_t prvTaskStatsCommand(ato_cli_core_t *cli, char *pcWriteBuffer,
   return pdFALSE;
 }
 
-static const ato_cli_command_t xTasksCommand = {
-    "ps", "\r\nps:\r\n Show FreeRTOS Tasks\r\n\r\n", prvTaskStatsCommand, 0};
-
 static BaseType_t prvStackOverflow(ato_cli_core_t *cli, char *pcWriteBuffer,
                                    size_t xWriteBufferLen,
                                    const char *pcCommandString) {
@@ -82,161 +78,67 @@ static BaseType_t prvStackOverflow(ato_cli_core_t *cli, char *pcWriteBuffer,
   return pdFALSE;
 }
 
-static const ato_cli_command_t xStackOverflowCommand = {
-    "so", "\r\nso:\r\n Stack Overflow\r\n\r\n", prvStackOverflow, 0};
-
 static BaseType_t prvStatsCommand(ato_cli_core_t *cli, char *pcWriteBuffer,
                                   size_t xWriteBufferLen,
                                   const char *pcCommandString) {
-  (void)cli;
   (void)pcCommandString;
+  const ato_cli_ctx_t *ctx = ato_cli_core_user(cli);
+  const ato_uart_t *u = &ctx->uart;
   snprintf(pcWriteBuffer, xWriteBufferLen,
            "tx dropped bytes : %lu\r\n"
            "uart rx errors   : %lu\r\n"
            "uart tx errors   : %lu\r\n"
            "rx restart fails : %lu\r\n",
-           (unsigned long)tx_dropped_bytes, (unsigned long)uart_rx_errors,
-           (unsigned long)uart_tx_errors,
-           (unsigned long)uart_rx_restart_failures);
+           (unsigned long)u->tx_dropped_bytes, (unsigned long)u->rx_errors,
+           (unsigned long)u->tx_errors, (unsigned long)u->rx_restart_failures);
   return pdFALSE;
 }
 
-static const ato_cli_command_t xStatsCommand = {
-    "stats", "\r\nstats:\r\n Show UART error and drop counters\r\n\r\n",
-    prvStatsCommand, 0};
-
-/* CLI task ----------------------------------------------------------------- */
-
-void ato_cli_task(void *argument) {
-  (void)argument;
-  uint32_t count = 0;
-  // must be set before RX DMA starts: the UART ISRs notify this task
-  cliTaskHandle = xTaskGetCurrentTaskHandle();
-  printf("hello %lu\r\n", (unsigned long)count++);
-  ato_cli_core_init(&s_cli, NULL);
-  ato_cli_core_register(&s_cli, &xTasksCommand);
-  ato_cli_core_register(&s_cli, &xStackOverflowCommand);
-  ato_cli_core_register(&s_cli, &xStatsCommand);
-  if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, app_rx_buf, APP_RX_SIZE) !=
-      HAL_OK) {
-    fatalError("USART1 RX DMA start failed\r\n");
-  }
-  for (;;) {
-    // Snapshot head and handle an RX restart atomically w.r.t. the UART/DMA
-    // ISRs (priority 5 == configMAX_SYSCALL_INTERRUPT_PRIORITY, so masked).
-    taskENTER_CRITICAL();
-    if (rx_restarted) {
-      rx_restarted = 0;
-      app_rx_tail = 0; // DMA restarted writing at index 0
-    }
-    u32 head_snapshot = app_rx_head;
-    taskEXIT_CRITICAL();
-
-    if (head_snapshot == app_rx_tail) {
-      // nothing to do: sleep until the RX ISR notifies us
-      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    } else {
-      if (head_snapshot < app_rx_tail) {
-        // process from tail to end of buffer
-        app_rx_tail +=
-            app_rx_bytes(&app_rx_buf[app_rx_tail], APP_RX_SIZE - app_rx_tail);
-      } else {
-        app_rx_tail +=
-            app_rx_bytes(&app_rx_buf[app_rx_tail], head_snapshot - app_rx_tail);
-      }
-      app_rx_tail = app_rx_mask(app_rx_tail);
-    }
-  }
-  /* A task must never return; if it must end, call vTaskDelete(NULL). */
-}
-
-/* TX ring buffer ----------------------------------------------------------- */
-
-// called at init transfer and under interrupt
-static void _tx_next_chunk(void) {
-  if (tx_inflight > 0 || app_tx_head == app_tx_tail) {
-    return;
-  }
-  u32 head = app_tx_head;
-  u16 tx_len =
-      head > app_tx_tail ? head - app_tx_tail : APP_TX_SIZE - app_tx_tail;
-  tx_inflight = tx_len;
-  if (HAL_UART_Transmit_DMA(&huart1, &app_tx_buf[app_tx_tail], tx_len) !=
-      HAL_OK) {
-    tx_inflight = 0;
-  }
-}
-
-static u32 tx_free(void) { // always leave an empty byte
-  return APP_TX_SIZE - 1 - ((app_tx_head - app_tx_tail) & (APP_TX_SIZE - 1));
-}
-
-void tx_bytes(const uint8_t *data, uint16_t len) {
-  u32 n = tx_free();
-  if (n > len) {
-    n = len;
-  }
-  tx_dropped_bytes += len - n;
-
-  u32 head = app_tx_head; // local copy: only this function writes head
-  for (u32 i = 0; i < n; i++) {
-    app_tx_buf[app_tx_mask(head + i)] = data[i];
-  }
-  // make sure the data stores are done before the ISR can see the new head
-  __COMPILER_BARRIER();
-  app_tx_head = app_tx_mask(head + n);
-  _tx_next_chunk();
-}
-
-void tx_string(char *str) { tx_bytes((u8 *)str, strlen(str)); }
-
 /* Line editor -------------------------------------------------------------- */
 
-static void cli_run(const char *command) {
-  char *out = ato_cli_core_output_buffer(&s_cli);
+static void cli_run(ato_cli_ctx_t *ctx, const char *command) {
+  char *out = ato_cli_core_output_buffer(&ctx->cli);
   BaseType_t more;
   do {
-    more = ato_cli_core_process(&s_cli, command, out,
+    more = ato_cli_core_process(&ctx->cli, command, out,
                                 configCOMMAND_INT_MAX_OUTPUT_SIZE);
-    tx_string(out);
+    ato_uart_write_string(&ctx->uart, out);
   } while (more != pdFALSE);
 }
 
 // Line editor: echo, end of line (\r, \n or \r\n), backspace, overlong lines.
-static u32 app_rx_bytes(uint8_t *bytes, size_t size) {
-  static char commandBuf[100];
-  static size_t commandBufIdx = 0;
-  static u8 discard = 0;      // line too long: ignore until end of line
-  static u8 last_char_cr = 0; // swallow the \n of a \r\n pair
+static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
+                            uint32_t size) {
+  ato_uart_t *u = &ctx->uart;
 
-  for (size_t i = 0; i < size; i++) {
-    u8 c = bytes[i];
+  for (uint32_t i = 0; i < size; i++) {
+    uint8_t c = bytes[i];
 
     if (c == '\r' || c == '\n') {
-      u8 is_lf_after_cr = (c == '\n') && last_char_cr;
-      last_char_cr = (c == '\r');
+      uint8_t is_lf_after_cr = (c == '\n') && ctx->last_char_cr;
+      ctx->last_char_cr = (c == '\r');
       if (is_lf_after_cr) {
         continue; // second half of \r\n, line already handled
       }
-      tx_string("\r\n");
-      if (!discard && commandBufIdx > 0) {
-        commandBuf[commandBufIdx] = 0;
-        cli_run(commandBuf);
+      ato_uart_write_string(u, "\r\n");
+      if (!ctx->discard && ctx->cmd_idx > 0) {
+        ctx->cmd_buf[ctx->cmd_idx] = 0;
+        cli_run(ctx, ctx->cmd_buf);
       }
-      commandBufIdx = 0;
-      discard = 0;
+      ctx->cmd_idx = 0;
+      ctx->discard = 0;
       continue;
     }
-    last_char_cr = 0;
+    ctx->last_char_cr = 0;
 
-    if (discard) {
+    if (ctx->discard) {
       continue;
     }
 
     if (c == 0x7f || c == '\b') { // DEL (most terminals) or BS
-      if (commandBufIdx > 0) {
-        commandBufIdx--;
-        tx_string("\b \b"); // erase the character on screen
+      if (ctx->cmd_idx > 0) {
+        ctx->cmd_idx--;
+        ato_uart_write_string(u, "\b \b"); // erase the character on screen
       }
       continue;
     }
@@ -245,61 +147,59 @@ static u32 app_rx_bytes(uint8_t *bytes, size_t size) {
       continue; // ignore other control characters (no echo)
     }
 
-    if (commandBufIdx >= sizeof(commandBuf) - 1) {
-      tx_string("\r\nError: command too long, line ignored.\r\n");
-      discard = 1;
+    if (ctx->cmd_idx >= sizeof(ctx->cmd_buf) - 1) {
+      ato_uart_write_string(u,
+                            "\r\nError: command too long, line ignored.\r\n");
+      ctx->discard = 1;
       continue;
     }
 
-    commandBuf[commandBufIdx++] = (char)c;
-    tx_bytes(&c, 1); // echo
+    ctx->cmd_buf[ctx->cmd_idx++] = (char)c;
+    ato_uart_write(u, &c, 1); // echo
   }
   return size;
 }
 
-/* HAL UART callbacks (USART1) ---------------------------------------------- */
+/* CLI task ----------------------------------------------------------------- */
 
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-  if (huart->Instance == USART1) {
-    app_tx_tail = app_tx_mask(app_tx_tail + tx_inflight);
-    tx_inflight = 0;
-    _tx_next_chunk();
+static void cli_task(void *argument) {
+  ato_cli_ctx_t *ctx = argument;
+
+  if (ato_uart_start_rx(&ctx->uart, xTaskGetCurrentTaskHandle()) != HAL_OK) {
+    fatalError("%s: UART RX DMA start failed\r\n", pcTaskGetName(NULL));
   }
-}
-
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
-  if (huart->Instance == USART1) {
-    app_rx_head = app_rx_mask(size); // size is the position of the next
-                                     // write in range [1..buffer_size]
-    BaseType_t woken = pdFALSE;
-    vTaskNotifyGiveFromISR(cliTaskHandle, &woken);
-    portYIELD_FROM_ISR(woken);
-  }
-}
-
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
-  /* overrun, noise, framing: without a restart, reception stays stuck */
-  if (huart->Instance == USART1) {
-    if (huart->gState == HAL_UART_STATE_READY && tx_inflight) {
-      uart_tx_errors++;
-      app_tx_tail =
-          app_tx_mask(app_tx_tail + tx_inflight); // drop current inflight
-      tx_inflight = 0;
-      _tx_next_chunk();
-    }
-
-    if (huart->RxState == HAL_UART_STATE_READY) {
-      uart_rx_errors++;
-      // DMA restarts writing at index 0: tell the task to resync its tail
-      app_rx_head = 0;
-      rx_restarted = 1;
-      if (HAL_UARTEx_ReceiveToIdle_DMA(&huart1, app_rx_buf, APP_RX_SIZE) !=
-          HAL_OK) {
-        uart_rx_restart_failures++;
-      }
-      BaseType_t woken = pdFALSE;
-      vTaskNotifyGiveFromISR(cliTaskHandle, &woken);
-      portYIELD_FROM_ISR(woken);
+  for (;;) {
+    const uint8_t *data;
+    uint32_t n = ato_uart_rx_peek(&ctx->uart, &data);
+    if (n == 0) {
+      // nothing to do: sleep until the RX ISR notifies us
+      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    } else {
+      ato_uart_rx_consume(&ctx->uart, line_editor(ctx, data, n));
     }
   }
+  /* A task must never return; if it must end, call vTaskDelete(NULL). */
+}
+
+ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
+                                   const char *task_name) {
+  ato_cli_ctx_t *ctx = pvPortMalloc(sizeof(*ctx));
+  if (ctx == NULL) {
+    fatalError("Allocation of context failed for task %s", task_name);
+  }
+  memset(ctx, 0, sizeof(*ctx));
+
+  ato_uart_init(&ctx->uart, huart);
+  ato_cli_core_init(&ctx->cli, ctx);
+  // list items live in the context: no extra allocation that could fail
+  for (int i = 0; i < COUNT_OF(cli_commands); i++) {
+    ato_cli_core_register_static(&ctx->cli, &cli_commands[i],
+                                 &ctx->cmd_items[i]);
+  }
+
+  if (xTaskCreate(cli_task, task_name, CLI_STACK_WORDS, ctx, CLI_PRIORITY,
+                  NULL) != pdPASS) {
+    fatalError("Task creation failed for task %s", task_name);
+  }
+  return ctx;
 }
