@@ -79,6 +79,11 @@ struct ato_cli_core {
 /** Initialise an interpreter: empty command list (except "help"). */
 void ato_cli_core_init(ato_cli_core_t *cli, void *user);
 
+/*
+ * Registration follows the same rule as ato_cli_core_process(): it must be
+ * done by the task that owns the context, or before that task starts.
+ */
+
 /** Register a command; the list item is allocated with pvPortMalloc(). */
 BaseType_t ato_cli_core_register(ato_cli_core_t *cli,
                                  const ato_cli_command_t *def);

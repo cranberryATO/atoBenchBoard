@@ -4,6 +4,7 @@
 #include "ato_cli_core.h"
 #include "ato_error.h"
 #include "ato_uart.h"
+#include "ato_utils.h"
 #include "task.h"
 #include <stdio.h>
 #include <string.h>
@@ -11,8 +12,6 @@
 #define CLI_CMD_SIZE 100    // max command line length, null included
 #define CLI_STACK_WORDS 512 // 2 KB: vTaskList/snprintf
 #define CLI_PRIORITY (tskIDLE_PRIORITY + 1)
-
-#define COUNT_OF(table) (sizeof(table) / sizeof(table[0]))
 
 static BaseType_t prvTaskStatsCommand(ato_cli_core_t *cli, char *pcWriteBuffer,
                                       size_t xWriteBufferLen,
@@ -166,7 +165,7 @@ static void cli_task(void *argument) {
   ato_cli_ctx_t *ctx = argument;
 
   if (ato_uart_start_rx(&ctx->uart, xTaskGetCurrentTaskHandle()) != HAL_OK) {
-    fatalError("%s: UART RX DMA start failed\r\n", pcTaskGetName(NULL));
+    fatalError("%s: UART RX DMA start failed", pcTaskGetName(NULL));
   }
   for (;;) {
     const uint8_t *data;
@@ -192,7 +191,7 @@ ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
   ato_uart_init(&ctx->uart, huart);
   ato_cli_core_init(&ctx->cli, ctx);
   // list items live in the context: no extra allocation that could fail
-  for (int i = 0; i < COUNT_OF(cli_commands); i++) {
+  for (size_t i = 0; i < COUNT_OF(cli_commands); i++) {
     ato_cli_core_register_static(&ctx->cli, &cli_commands[i],
                                  &ctx->cmd_items[i]);
   }

@@ -31,7 +31,7 @@
 
 #include "ato_cli_core.h"
 
-#include "task.h"
+#include "task.h" // configASSERT() uses taskDISABLE_INTERRUPTS()
 #include <string.h>
 
 static BaseType_t help_command(ato_cli_core_t *cli, char *out, size_t out_len,
@@ -65,17 +65,13 @@ void ato_cli_core_register_static(ato_cli_core_t *cli,
   configASSERT(def != NULL);
   configASSERT(item != NULL);
 
-  taskENTER_CRITICAL();
-  {
-    /* Reference the command being registered from the list item. */
-    item->def = def;
+  /* Reference the command being registered from the list item. */
+  item->def = def;
 
-    /* The new list item is appended to the end of the list. */
-    item->next = NULL;
-    cli->last->next = item;
-    cli->last = item;
-  }
-  taskEXIT_CRITICAL();
+  /* The new list item is appended to the end of the list. */
+  item->next = NULL;
+  cli->last->next = item;
+  cli->last = item;
 }
 /*-----------------------------------------------------------*/
 
