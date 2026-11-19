@@ -19,16 +19,16 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "cmsis_os.h"
-#include "main.h"
-#include "portmacro.h"
 #include "task.h"
+#include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "FreeRTOS_CLI.h"
 #include "ato_error.h"
 #include "usart.h"
+#include "usb_device.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -92,12 +92,13 @@ static void CliTask(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
-void StartDefaultTask(void const *argument);
+void StartDefaultTask(void const * argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
 /* Hook prototypes */
 void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
+void vApplicationMallocFailedHook(void);
 
 /* USER CODE BEGIN 4 */
 __weak void vApplicationStackOverflowHook(xTaskHandle xTask,
@@ -164,11 +165,26 @@ static const CLI_Command_Definition_t xStatsCommand = {
 
 /* USER CODE END 4 */
 
+/* USER CODE BEGIN 5 */
+__weak void vApplicationMallocFailedHook(void) {
+  /* vApplicationMallocFailedHook() will only be called if
+  configUSE_MALLOC_FAILED_HOOK is set to 1 in FreeRTOSConfig.h. It is a hook
+  function that will get called if a call to pvPortMalloc() fails.
+  pvPortMalloc() is called internally by the kernel whenever a task, queue,
+  timer or semaphore is created. It is also called by various parts of the
+  demo application. If heap_1.c or heap_2.c are used, then the size of the
+  heap available to pvPortMalloc() is defined by configTOTAL_HEAP_SIZE in
+  FreeRTOSConfig.h, and the xPortGetFreeHeapSize() API function can be used
+  to query the size of free heap space that remains (although it does not
+  provide information on how the remaining heap might be fragmented). */
+}
+/* USER CODE END 5 */
+
 /**
- * @brief  FreeRTOS initialization
- * @param  None
- * @retval None
- */
+  * @brief  FreeRTOS initialization
+  * @param  None
+  * @retval None
+  */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
 
@@ -204,6 +220,7 @@ void MX_FREERTOS_Init(void) {
               tskIDLE_PRIORITY + 1,
               &cliTaskHandle); /* used by the UART ISR to wake the task */
   /* USER CODE END RTOS_THREADS */
+
 }
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -213,7 +230,10 @@ void MX_FREERTOS_Init(void) {
  * @retval None
  */
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const *argument) {
+void StartDefaultTask(void const * argument)
+{
+  /* init code for USB_Device */
+  MX_USB_Device_Init();
   /* USER CODE BEGIN StartDefaultTask */
   /* Infinite loop */
   for (;;) {
@@ -413,3 +433,4 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
 }
 
 /* USER CODE END Application */
+

@@ -45,7 +45,6 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
-    ${CMAKE_SOURCE_DIR}/Drivers/BSP/stm32g4xx_nucleo.c
     ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/FreeRTOS-Plus-CLI/FreeRTOS_CLI.c
     ${CMAKE_SOURCE_DIR}/Src/ato_error.c
 )
