@@ -19,6 +19,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "adc.h"
+#include "dac.h"
 #include "dma.h"
 #include "usart.h"
 #include "usb_device.h"
@@ -96,6 +98,8 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   MX_LPUART1_UART_Init();
+  MX_ADC1_Init();
+  MX_DAC1_Init();
   /* USER CODE BEGIN 2 */
 
   printf("main()\r\n");

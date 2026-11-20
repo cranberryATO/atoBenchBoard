@@ -19,14 +19,17 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "cmsis_os.h"
-#include "main.h"
 #include "task.h"
+#include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "adc.h"
+#include "ato_analog.h"
 #include "ato_cli.h"
 #include "ato_error.h"
+#include "dac.h"
 #include "usart.h"
 #include "usb_device.h"
 
@@ -58,7 +61,7 @@ osThreadId defaultTaskHandle;
 
 /* USER CODE END FunctionPrototypes */
 
-void StartDefaultTask(void const *argument);
+void StartDefaultTask(void const * argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -93,10 +96,10 @@ __weak void vApplicationMallocFailedHook(void) {
 /* USER CODE END 5 */
 
 /**
- * @brief  FreeRTOS initialization
- * @param  None
- * @retval None
- */
+  * @brief  FreeRTOS initialization
+  * @param  None
+  * @retval None
+  */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
 
@@ -125,8 +128,10 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
-  ato_cli_create_task(&huart1, "CLI1");
+  ato_cli_ctx_t *cli1 = ato_cli_create_task(&huart1, "CLI1");
+  ato_analog_create_task(&hadc1, &hdac1, DAC_CHANNEL_1, cli1);
   /* USER CODE END RTOS_THREADS */
+
 }
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -136,7 +141,8 @@ void MX_FREERTOS_Init(void) {
  * @retval None
  */
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const *argument) {
+void StartDefaultTask(void const * argument)
+{
   /* init code for USB_Device */
   MX_USB_Device_Init();
   /* USER CODE BEGIN StartDefaultTask */
@@ -151,3 +157,4 @@ void StartDefaultTask(void const *argument) {
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
+
