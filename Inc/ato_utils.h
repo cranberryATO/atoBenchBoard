@@ -11,4 +11,7 @@
 #define COUNT_OF(a)                                                            \
   (sizeof(a) / sizeof((a)[0]) + 0 * sizeof(char[IS_ARRAY(a) ? 1 : -1]))
 
+#define FOR_EACH(table, iterator) \
+  for (__typeof(&(table)[0]) iterator = &(table)[0]; iterator < &(table)[COUNT_OF(table)]; iterator++)
+
 #endif /* ATO_UTILS_H */

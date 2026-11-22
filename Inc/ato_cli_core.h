@@ -60,6 +60,15 @@ typedef struct {
   int8_t expected_params; // fixed number of parameters, or -1 for variable
 } ato_cli_command_t;
 
+// X-macro helpers: X(name, help, handler, param_count)
+#define ATO_CLI_X_COUNT(name, help, handler, params) +1
+#define ATO_CLI_X_DEF(name, help, handler, params) {(name), (help), (handler), (params)},
+
+// Context member declaration (use in the .h in the context struct)
+#define ATO_CLI_ITEMS(list) ato_cli_list_item_t cmd_items[0 list(ATO_CLI_X_COUNT)]
+// Command table definition (use in the .c)
+#define ATO_CLI_TABLE(table, list) static const ato_cli_command_t table[] = {list(ATO_CLI_X_DEF)}
+
 /** Element of the per-interpreter list of registered commands. */
 typedef struct ato_cli_list_item {
   const ato_cli_command_t *def;
