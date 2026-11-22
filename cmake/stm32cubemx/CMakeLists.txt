@@ -33,6 +33,7 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/dac.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/dma.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/usart.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/tim.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/usb_device.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/usbd_conf.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Src/usbd_desc.c
@@ -108,7 +109,9 @@ set(MX_LINK_DIRS
 set(MX_LINK_LIBS 
     STM32_Drivers
     ${TOOLCHAIN_LINK_LIBRARIES}
-    USB_Device_Library	FreeRTOS	
+    USB_Device_Library
+	FreeRTOS
+	
 )
 # Interface library for includes and symbols
 add_library(stm32cubemx INTERFACE)

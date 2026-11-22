@@ -1,0 +1,18 @@
+[project]
+name = "scope"
+version = "0.1.0"
+description = "Plot the input / output curves acquired by the STM32 analog scope"
+authors = [
+    { name = "André Tousch", email = "62934049+cranberryATO@users.noreply.github.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.5",
+    "pyserial>=3.5",
+]
+
+[tool.uv]
+# uv-managed Python: it ships tkinter (matplotlib GUI backend), unlike the
+# system Python without the python3-tk package
+python-preference = "only-managed"

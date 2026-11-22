@@ -30,6 +30,7 @@
 #include "ato_cli.h"
 #include "ato_error.h"
 #include "dac.h"
+#include "tim.h"
 #include "usart.h"
 #include "usb_device.h"
 
@@ -129,7 +130,17 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   ato_cli_ctx_t *cli1 = ato_cli_create_task(&huart1, "CLI1");
-  ato_analog_create_task(&hadc1, &hdac1, DAC_CHANNEL_1, cli1);
+  static const ato_analog_config_t analog_cfg = {
+      .adc = {&hadc1},
+      .dac = {&hdac1},
+      .scope_adc = &hadc1, // rank 1 = IN1 (PA0), rank 2 = IN5 (PB14)
+      .scope_dac = &hdac1, // OUT1 (PA4)
+      .scope_dac_channel = DAC_CHANNEL_1,
+      .scope_tim = &htim7,
+      .scope_in_label = "adc1.1",
+      .scope_out_label = "adc1.5",
+  };
+  ato_analog_init(&analog_cfg, cli1);
   /* USER CODE END RTOS_THREADS */
 
 }

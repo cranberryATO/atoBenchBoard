@@ -6,8 +6,9 @@
  *
  * - RX: circular DMA with ReceiveToIdle; the registered task is notified
  *   (xTaskNotifyGive) on every RX event and after an RX restart on error.
- * - TX: ring buffer drained by DMA chunks; writes never block, bytes that do
- *   not fit are dropped and counted.
+ * - TX: ring buffer drained by DMA chunks. ato_uart_write*() never block,
+ *   bytes that do not fit are dropped and counted; ato_uart_write*_wait()
+ *   block until everything is queued (the task is notified on TX complete).
  *
  * Requirements on the UART (CubeMX): RX DMA in circular mode, TX DMA in
  * normal mode, UART and DMA IRQ priorities >= 5
@@ -35,6 +36,7 @@ typedef struct {
   volatile uint32_t tx_tail;
   volatile uint32_t tx_inflight;
   uint32_t tx_dropped_bytes;
+  volatile uint8_t tx_waiting; // the task waits for room in tx_buf
 
   uint8_t rx_buf[ATO_UART_RX_SIZE];
   volatile uint32_t rx_head;
@@ -83,5 +85,19 @@ void ato_uart_write(ato_uart_t *u, const uint8_t *data, uint16_t len);
  * @brief  Queue a null-terminated string for transmission.
  */
 void ato_uart_write_string(ato_uart_t *u, const char *str);
+
+/**
+ * @brief  Queue bytes for transmission, waiting for room in the buffer when
+ *         needed (nothing is dropped). Must be called from the notify task
+ *         given to ato_uart_start_rx(): it sleeps on its task notification,
+ *         which may consume an RX notification; the caller must check for
+ *         received data (ato_uart_rx_peek) before sleeping again.
+ */
+void ato_uart_write_wait(ato_uart_t *u, const uint8_t *data, uint32_t len);
+
+/**
+ * @brief  Null-terminated string version of ato_uart_write_wait().
+ */
+void ato_uart_write_string_wait(ato_uart_t *u, const char *str);
 
 #endif /* ATO_UART_H */

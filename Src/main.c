@@ -23,6 +23,7 @@
 #include "dac.h"
 #include "dma.h"
 #include "usart.h"
+#include "tim.h"
 #include "usb_device.h"
 #include "gpio.h"
 
@@ -100,6 +101,7 @@ int main(void)
   MX_LPUART1_UART_Init();
   MX_ADC1_Init();
   MX_DAC1_Init();
+  MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
 
   printf("main()\r\n");

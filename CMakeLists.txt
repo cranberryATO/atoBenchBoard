@@ -51,6 +51,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Src/ato_uart.c
     ${CMAKE_SOURCE_DIR}/Src/ato_adc.c
     ${CMAKE_SOURCE_DIR}/Src/ato_analog.c
+    ${CMAKE_SOURCE_DIR}/Src/ato_gpio.c
 )
 
 # Add include paths

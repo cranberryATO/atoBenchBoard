@@ -101,7 +101,8 @@ static void cli_run(ato_cli_ctx_t *ctx, const char *command) {
   do {
     more = ato_cli_core_process(&ctx->cli, command, out,
                                 configCOMMAND_INT_MAX_OUTPUT_SIZE);
-    ato_uart_write_string(&ctx->uart, out);
+    // wait for room: a command output can be larger than the TX buffer
+    ato_uart_write_string_wait(&ctx->uart, out);
   } while (more != pdFALSE);
 }
 

@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#define ATO_UART_TX_WAIT_MS 50 // safety timeout of ato_uart_write_wait()
+
 _Static_assert((ATO_UART_RX_SIZE & (ATO_UART_RX_SIZE - 1)) == 0,
                "ATO_UART_RX_SIZE must be a power of 2");
 _Static_assert((ATO_UART_TX_SIZE & (ATO_UART_TX_SIZE - 1)) == 0,
@@ -105,7 +107,7 @@ void ato_uart_rx_consume(ato_uart_t *u, uint32_t n) {
 
 /* TX ----------------------------------------------------------------------- */
 
-// called from the owner task and under interrupt
+// called from tx_kick() (task, in a critical section) and from the ISRs
 static void tx_next_chunk(ato_uart_t *u) {
   if (u->tx_inflight > 0 || u->tx_head == u->tx_tail) {
     return;
@@ -124,25 +126,61 @@ static uint32_t tx_free(const ato_uart_t *u) { // always leave an empty byte
          ((u->tx_head - u->tx_tail) & (ATO_UART_TX_SIZE - 1));
 }
 
-void ato_uart_write(ato_uart_t *u, const uint8_t *data, uint16_t len) {
+// Start a DMA chunk if idle. From the task: tx_next_chunk() is also called by
+// the TX complete ISR, so the "inflight" test and the DMA start must be atomic.
+static void tx_kick(ato_uart_t *u) {
+  taskENTER_CRITICAL();
+  tx_next_chunk(u);
+  taskEXIT_CRITICAL();
+}
+
+// Copy as many bytes as fit in tx_buf; returns the number of bytes copied.
+static uint32_t tx_push(ato_uart_t *u, const uint8_t *data, uint32_t len) {
   uint32_t n = tx_free(u);
   if (n > len) {
     n = len;
   }
-  u->tx_dropped_bytes += len - n;
-
-  uint32_t head = u->tx_head; // local copy: only this function writes head
+  uint32_t head = u->tx_head; // local copy: only the task writes head
   for (uint32_t i = 0; i < n; i++) {
     u->tx_buf[tx_mask(head + i)] = data[i];
   }
   // make sure the data stores are done before the ISR can see the new head
   __COMPILER_BARRIER();
   u->tx_head = tx_mask(head + n);
-  tx_next_chunk(u);
+  return n;
+}
+
+void ato_uart_write(ato_uart_t *u, const uint8_t *data, uint16_t len) {
+  u->tx_dropped_bytes += len - tx_push(u, data, len);
+  tx_kick(u);
 }
 
 void ato_uart_write_string(ato_uart_t *u, const char *str) {
   ato_uart_write(u, (const uint8_t *)str, strlen(str));
+}
+
+void ato_uart_write_wait(ato_uart_t *u, const uint8_t *data, uint32_t len) {
+  for (;;) {
+    uint32_t n = tx_push(u, data, len);
+    data += n;
+    len -= n;
+    tx_kick(u);
+    if (len == 0) {
+      return;
+    }
+    // Set the flag before testing for room: a TX complete after the test
+    // notifies us. Any other notification (RX) just makes us loop again; the
+    // timeout is only a safety net.
+    u->tx_waiting = 1;
+    if (tx_free(u) == 0) {
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(ATO_UART_TX_WAIT_MS));
+    }
+    u->tx_waiting = 0;
+  }
+}
+
+void ato_uart_write_string_wait(ato_uart_t *u, const char *str) {
+  ato_uart_write_wait(u, (const uint8_t *)str, strlen(str));
 }
 
 /* HAL UART callbacks ------------------------------------------------------- */
@@ -164,6 +202,9 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
   u->tx_tail = tx_mask(u->tx_tail + u->tx_inflight);
   u->tx_inflight = 0;
   tx_next_chunk(u);
+  if (u->tx_waiting) {
+    notify_from_isr(u); // room was made in tx_buf
+  }
 }
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size) {
@@ -188,6 +229,9 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
     u->tx_tail = tx_mask(u->tx_tail + u->tx_inflight); // drop current inflight
     u->tx_inflight = 0;
     tx_next_chunk(u);
+    if (u->tx_waiting) {
+      notify_from_isr(u);
+    }
   }
 
   if (huart->RxState == HAL_UART_STATE_READY) {
