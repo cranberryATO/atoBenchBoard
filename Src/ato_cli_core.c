@@ -3,9 +3,10 @@
  *
  * Forked from FreeRTOS+CLI V202212.00 (FreeRTOS_CLI.c).
  * Copyright (C) 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
- * Modified: all mutable state (command list, list tail, current command,
- * "help" cursor, output buffer) moved into a per-instance context
- * (ato_cli_core_t), so that several interpreters can run concurrently.
+ * Modified: all mutable state (command list, list tail, output sink) moved
+ * into a per-instance context (ato_cli_core_t), so that several interpreters
+ * can run concurrently; command handlers write their output through a
+ * callback instead of filling a buffer over several calls.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -32,10 +33,11 @@
 #include "ato_cli_core.h"
 
 #include "task.h" // taskENTER_CRITICAL(); configASSERT() uses taskDISABLE_INTERRUPTS()
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
-static BaseType_t help_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                               const char *cmd_string);
+static void help_command(ato_cli_core_t *cli, const char *cmd_string);
 static int8_t get_number_of_parameters(const char *cmd_string);
 
 /* The "help" command is always at the head of every command list. */
@@ -45,16 +47,17 @@ static const ato_cli_command_t help_command_def = {
 
 /*-----------------------------------------------------------*/
 
-void ato_cli_core_init(ato_cli_core_t *cli, void *user) {
+void ato_cli_core_init(ato_cli_core_t *cli, void *user, ato_cli_write_fn write,
+                       void *write_arg) {
   configASSERT(cli != NULL);
+  configASSERT(write != NULL);
 
   cli->commands.def = &help_command_def;
   cli->commands.next = NULL;
   cli->last = &cli->commands;
-  cli->current = NULL;
-  cli->help_next = NULL;
+  cli->write = write;
+  cli->write_arg = write_arg;
   cli->user = user;
-  cli->output[0] = '\0';
 }
 /*-----------------------------------------------------------*/
 
@@ -81,75 +84,69 @@ void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
 }
 /*-----------------------------------------------------------*/
 
-
-BaseType_t ato_cli_core_process(ato_cli_core_t *cli, const char *input,
-                                char *out, size_t out_len) {
-  BaseType_t ret = pdTRUE;
-
+void ato_cli_core_process(ato_cli_core_t *cli, const char *input) {
   configASSERT(cli != NULL);
 
-  if (cli->current == NULL) {
-    /* Search for the command string in the list of registered commands. */
-    for (cli->current = &cli->commands; cli->current != NULL;
-         cli->current = cli->current->next) {
-      const char *registered = cli->current->def->command;
-      size_t len = strlen(registered);
+  /* Search for the command string in the list of registered commands. */
+  for (const ato_cli_list_item_t *item = &cli->commands; item != NULL;
+       item = item->next) {
+    const ato_cli_command_t *def = item->def;
+    size_t len = strlen(def->command);
 
-      /* To ensure the string lengths match exactly, so as not to pick up
-       * a sub-string of a longer command, check the byte after the expected
-       * end of the string is either the end of the string or a space before
-       * a parameter. */
-      if (strncmp(input, registered, len) == 0) {
-        if ((input[len] == ' ') || (input[len] == 0x00)) {
-          /* The command has been found. Check it has the expected number of
-           * parameters. If expected_params is -1, then there could be a
-           * variable number of parameters and no check is made. */
-          if (cli->current->def->expected_params >= 0) {
-            if (get_number_of_parameters(input) !=
-                cli->current->def->expected_params) {
-              ret = pdFALSE;
-            }
-          }
-          break;
-        }
-      }
+    /* To ensure the string lengths match exactly, so as not to pick up a
+     * sub-string of a longer command, check the byte after the expected end
+     * of the string is either the end of the string or a space before a
+     * parameter. */
+    if (strncmp(input, def->command, len) != 0 ||
+        (input[len] != ' ' && input[len] != 0x00)) {
+      continue;
     }
+
+    /* The command has been found. Check it has the expected number of
+     * parameters. If expected_params is -1, then there could be a variable
+     * number of parameters and no check is made. */
+    if (def->expected_params >= 0 &&
+        get_number_of_parameters(input) != def->expected_params) {
+      ato_cli_core_puts(cli, "Incorrect command parameter(s).  Enter \"help\" "
+                             "to view a list of available commands.\r\n\r\n");
+    } else {
+      def->handler(cli, input);
+    }
+    return;
   }
 
-  if ((cli->current != NULL) && (ret == pdFALSE)) {
-    /* The command was found, but the number of parameters with the command
-     * was incorrect. */
-    strncpy(out,
-            "Incorrect command parameter(s).  Enter \"help\" to view a list "
-            "of available commands.\r\n\r\n",
-            out_len);
-    out[out_len - 1] = '\0';
-    cli->current = NULL;
-  } else if (cli->current != NULL) {
-    /* Call the callback function that is registered to this command. */
-    ret = cli->current->def->handler(cli, out, out_len, input);
-
-    /* If ret is pdFALSE, then no further strings will be returned after this
-     * one, and current can be reset to NULL ready to search for the next
-     * entered command. */
-    if (ret == pdFALSE) {
-      cli->current = NULL;
-    }
-  } else {
-    /* current was NULL, the command was not found. */
-    strncpy(out,
-            "Command not recognised.  Enter 'help' to view a list of "
-            "available commands.\r\n\r\n",
-            out_len);
-    out[out_len - 1] = '\0';
-    ret = pdFALSE;
-  }
-
-  return ret;
+  ato_cli_core_puts(cli, "Command not recognised.  Enter 'help' to view a "
+                         "list of available commands.\r\n\r\n");
 }
 /*-----------------------------------------------------------*/
 
-char *ato_cli_core_output_buffer(ato_cli_core_t *cli) { return cli->output; }
+void ato_cli_core_write(ato_cli_core_t *cli, const char *data, size_t len) {
+  if (len > 0) {
+    cli->write(cli->write_arg, data, len);
+  }
+}
+/*-----------------------------------------------------------*/
+
+void ato_cli_core_puts(ato_cli_core_t *cli, const char *str) {
+  ato_cli_core_write(cli, str, strlen(str));
+}
+/*-----------------------------------------------------------*/
+
+void ato_cli_core_printf(ato_cli_core_t *cli, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  int n = vsnprintf(cli->printf_buf, sizeof(cli->printf_buf), fmt, args);
+  va_end(args);
+
+  if (n < 0) {
+    return; // encoding error: nothing to print
+  }
+  // vsnprintf returns the untruncated length
+  size_t len = (size_t)n < sizeof(cli->printf_buf)
+                   ? (size_t)n
+                   : sizeof(cli->printf_buf) - 1;
+  ato_cli_core_write(cli, cli->printf_buf, len);
+}
 /*-----------------------------------------------------------*/
 
 void *ato_cli_core_user(const ato_cli_core_t *cli) { return cli->user; }
@@ -203,32 +200,15 @@ const char *ato_cli_core_get_parameter(const char *cmd_string,
 }
 /*-----------------------------------------------------------*/
 
-static BaseType_t help_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                               const char *cmd_string) {
-  BaseType_t ret;
-
+static void help_command(ato_cli_core_t *cli, const char *cmd_string) {
   (void)cmd_string;
 
-  if (cli->help_next == NULL) {
-    /* Reset the cursor back to the start of the list. */
-    cli->help_next = &cli->commands;
+  /* Commands may be appended meanwhile: each `next` is read once, and is
+   * either NULL or a fully linked item (see ato_cli_core_register()). */
+  for (const ato_cli_list_item_t *item = &cli->commands; item != NULL;
+       item = item->next) {
+    ato_cli_core_puts(cli, item->def->help);
   }
-
-  /* Return the next command help string, before moving the cursor on to the
-   * next command in the list. */
-  strncpy(out, cli->help_next->def->help, out_len);
-  out[out_len - 1] = '\0';
-  cli->help_next = cli->help_next->next;
-
-  if (cli->help_next == NULL) {
-    /* There are no more commands in the list, so there will be no more
-     * strings to return after this one and pdFALSE should be returned. */
-    ret = pdFALSE;
-  } else {
-    ret = pdTRUE;
-  }
-
-  return ret;
 }
 /*-----------------------------------------------------------*/
 

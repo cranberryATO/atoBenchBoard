@@ -4,7 +4,9 @@
  * Forked from FreeRTOS+CLI V202212.00 (FreeRTOS_CLI.h).
  * Copyright (C) 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * Modified: all mutable state moved into a per-instance context
- * (ato_cli_core_t), so that several interpreters can run concurrently.
+ * (ato_cli_core_t), so that several interpreters can run concurrently;
+ * command handlers write their output through a callback instead of filling
+ * a buffer over several calls.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,22 +37,25 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifndef configCOMMAND_INT_MAX_OUTPUT_SIZE
-#define configCOMMAND_INT_MAX_OUTPUT_SIZE 512
+#ifndef ATO_CLI_PRINTF_SIZE
+#define ATO_CLI_PRINTF_SIZE 128 // longest line of ato_cli_core_printf()
 #endif
 
 typedef struct ato_cli_core ato_cli_core_t;
 
 /**
- * Command handler. Writes its output into `out` (at most `out_len` bytes,
- * null-terminated). Returns pdTRUE if it has more output to produce (it will
- * be called again with the same command string), pdFALSE when done.
+ * Output sink, provided by the transport. Must write all `len` bytes,
+ * blocking if needed (back-pressure); it has no error to report.
+ */
+typedef void (*ato_cli_write_fn)(void *arg, const char *data, size_t len);
+
+/**
+ * Command handler. Writes its output with ato_cli_core_write(), _puts() or
+ * _printf(), as much as it wants, and returns when the command is done.
  * `cli` is the interpreter running the command; use ato_cli_core_user() to
  * reach the owner context.
  */
-typedef BaseType_t (*ato_cli_command_fn)(ato_cli_core_t *cli, char *out,
-                                         size_t out_len,
-                                         const char *cmd_string);
+typedef void (*ato_cli_command_fn)(ato_cli_core_t *cli, const char *cmd_string);
 
 /** Command descriptor, meant to be a const global. */
 typedef struct {
@@ -62,12 +67,15 @@ typedef struct {
 
 // X-macro helpers: X(name, help, handler, param_count)
 #define ATO_CLI_X_COUNT(name, help, handler, params) +1
-#define ATO_CLI_X_DEF(name, help, handler, params) {(name), (help), (handler), (params)},
+#define ATO_CLI_X_DEF(name, help, handler, params)                             \
+  {(name), (help), (handler), (params)},
 
 // Context member declaration (use in the .h in the context struct)
-#define ATO_CLI_ITEMS(list) ato_cli_list_item_t cmd_items[0 list(ATO_CLI_X_COUNT)]
+#define ATO_CLI_ITEMS(list)                                                    \
+  ato_cli_list_item_t cmd_items[0 list(ATO_CLI_X_COUNT)]
 // Command table definition (use in the .c)
-#define ATO_CLI_TABLE(table, list) static const ato_cli_command_t table[] = {list(ATO_CLI_X_DEF)}
+#define ATO_CLI_TABLE(table, list)                                             \
+  static const ato_cli_command_t table[] = {list(ATO_CLI_X_DEF)}
 
 /** Element of the per-interpreter list of registered commands. */
 typedef struct ato_cli_list_item {
@@ -79,14 +87,18 @@ typedef struct ato_cli_list_item {
 struct ato_cli_core {
   ato_cli_list_item_t commands;         // list head, always the "help" command
   ato_cli_list_item_t *last;            // list tail, for appending
-  const ato_cli_list_item_t *current;   // command producing multi-call output
-  const ato_cli_list_item_t *help_next; // cursor of the "help" command
+  ato_cli_write_fn write;               // output sink
+  void *write_arg;                      // its argument (e.g. the UART instance)
   void *user;                           // owner context, for command handlers
-  char output[configCOMMAND_INT_MAX_OUTPUT_SIZE]; // optional output buffer
+  char printf_buf[ATO_CLI_PRINTF_SIZE]; // formatting buffer of _printf()
 };
 
-/** Initialise an interpreter: empty command list (except "help"). */
-void ato_cli_core_init(ato_cli_core_t *cli, void *user);
+/**
+ * Initialise an interpreter: empty command list (except "help"), output
+ * sent to `write(write_arg, ...)`.
+ */
+void ato_cli_core_init(ato_cli_core_t *cli, void *user, ato_cli_write_fn write,
+                       void *write_arg);
 
 /**
  * Register a command, using a caller-provided list item (no allocation).
@@ -99,16 +111,26 @@ void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
                            ato_cli_list_item_t *item);
 
 /**
- * Run the command line `input`, writing output into `out` (`out_len` bytes).
- * Must be called repeatedly with the same input until it returns pdFALSE.
+ * Run the command line `input`; returns when the command is done and all its
+ * output has been given to the write callback.
  * Reentrant: distinct `cli` contexts can be used concurrently; a given
  * context must only be used by one task at a time.
  */
-BaseType_t ato_cli_core_process(ato_cli_core_t *cli, const char *input,
-                                char *out, size_t out_len);
+void ato_cli_core_process(ato_cli_core_t *cli, const char *input);
 
-/** Output buffer of this interpreter (configCOMMAND_INT_MAX_OUTPUT_SIZE). */
-char *ato_cli_core_output_buffer(ato_cli_core_t *cli);
+/** Output of a command: `len` bytes. */
+void ato_cli_core_write(ato_cli_core_t *cli, const char *data, size_t len);
+
+/** Output of a command: null-terminated string, of any length. */
+void ato_cli_core_puts(ato_cli_core_t *cli, const char *str);
+
+/**
+ * Output of a command: formatted text. The result is truncated to
+ * ATO_CLI_PRINTF_SIZE - 1 characters: call it once per line, and use
+ * ato_cli_core_puts() for long constant texts.
+ */
+void ato_cli_core_printf(ato_cli_core_t *cli, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
 
 /** Owner context given to ato_cli_core_init(). */
 void *ato_cli_core_user(const ato_cli_core_t *cli);

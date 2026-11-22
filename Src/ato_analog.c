@@ -27,27 +27,24 @@
 typedef enum { SHAPE_SINE, SHAPE_SQUARE, SHAPE_STEP } shape_t;
 static const char *const shape_names[] = {"sine", "square", "step"};
 
-static BaseType_t adc_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                              const char *cmd_string);
-static BaseType_t dac_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                              const char *cmd_string);
-static BaseType_t gen_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                              const char *cmd_string);
-static BaseType_t acq_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                              const char *cmd_string);
-static BaseType_t dump_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                               const char *cmd_string);
+static void adc_command(ato_cli_core_t *cli, const char *cmd_string);
+static void dac_command(ato_cli_core_t *cli, const char *cmd_string);
+static void gen_command(ato_cli_core_t *cli, const char *cmd_string);
+static void acq_command(ato_cli_core_t *cli, const char *cmd_string);
+static void dump_command(ato_cli_core_t *cli, const char *cmd_string);
 
 static const ato_cli_command_t analog_commands[] = {
     {"adc", "\r\nadc <n> <ch>:\r\n Read ADCn channel ch (raw and mV)\r\n\r\n",
      adc_command, 2},
-    {"dac", "\r\ndac <n> <ch> <mV>:\r\n Set DACn channel ch (0..3300 mV)\r\n\r\n",
+    {"dac",
+     "\r\ndac <n> <ch> <mV>:\r\n Set DACn channel ch (0..3300 mV)\r\n\r\n",
      dac_command, 3},
     {"gen",
      "\r\ngen sine|square <Hz> <mVpp> | gen step <mVpp>:\r\n Waveform of the "
      "next acquisition, centered on 1650 mV\r\n\r\n",
      gen_command, -1},
-    {"acq", "\r\nacq <fs> <n>:\r\n Generate and acquire n points at fs Hz\r\n\r\n",
+    {"acq",
+     "\r\nacq <fs> <n>:\r\n Generate and acquire n points at fs Hz\r\n\r\n",
      acq_command, 2},
     {"dump", "\r\ndump:\r\n Dump the last acquisition (hex CSV in,out)\r\n\r\n",
      dump_command, 0}};
@@ -64,11 +61,9 @@ typedef struct {
   uint32_t vpp_mv;
 
   // last acquisition
-  uint32_t n;             // number of points, 0: no data
-  uint64_t fs_mhz;        // actual sample rate, in mHz
-  uint64_t f_mhz;         // actual waveform frequency, in mHz (0 for step)
-  uint32_t dump_pos;      // next point to dump
-  bool dump_header_done;
+  uint32_t n;      // number of points, 0: no data
+  uint64_t fs_mhz; // actual sample rate, in mHz
+  uint64_t f_mhz;  // actual waveform frequency, in mHz (0 for step)
 
   ato_cli_list_item_t cmd_items[COUNT_OF(analog_commands)];
 } analog_ctx_t;
@@ -114,8 +109,7 @@ static bool param_is(const char *cmd_string, UBaseType_t index,
                      const char *word) {
   BaseType_t len;
   const char *p = ato_cli_core_get_parameter(cmd_string, index, &len);
-  return p != NULL && (size_t)len == strlen(word) &&
-         strncmp(p, word, len) == 0;
+  return p != NULL && (size_t)len == strlen(word) && strncmp(p, word, len) == 0;
 }
 
 static bool dac_channel_from_number(uint32_t ch, uint32_t *channel) {
@@ -176,23 +170,21 @@ static uint64_t tim_set_rate(TIM_HandleTypeDef *htim, uint32_t fs) {
 
 /* Unit commands ------------------------------------------------------------ */
 
-static BaseType_t adc_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                              const char *cmd_string) {
-  (void)cli;
+static void adc_command(ato_cli_core_t *cli, const char *cmd_string) {
   uint32_t n, ch;
   if (!param_uint(cmd_string, 1, &n) || !param_uint(cmd_string, 2, &ch)) {
-    snprintf(out, out_len, "error: invalid parameter\r\n");
-    return pdFALSE;
+    ato_cli_core_printf(cli, "error: invalid parameter\r\n");
+    return;
   }
   if (n < 1 || n > ATO_ANALOG_NB_ADC || s_ctx.cfg->adc[n - 1] == NULL) {
-    snprintf(out, out_len, "error: no ADC%lu\r\n", (unsigned long)n);
-    return pdFALSE;
+    ato_cli_core_printf(cli, "error: no ADC%lu\r\n", (unsigned long)n);
+    return;
   }
   ato_adc_t *a = &s_ctx.adc[n - 1];
   if (!ato_adc_is_software_triggered(a)) {
-    snprintf(out, out_len, "error: ADC%lu is timer triggered (scope)\r\n",
-             (unsigned long)n);
-    return pdFALSE;
+    ato_cli_core_printf(cli, "error: ADC%lu is timer triggered (scope)\r\n",
+                        (unsigned long)n);
+    return;
   }
 
   uint16_t raw;
@@ -201,30 +193,29 @@ static BaseType_t adc_command(ato_cli_core_t *cli, char *out, size_t out_len,
   xSemaphoreGive(s_ctx.lock);
 
   if (!ok) {
-    snprintf(out, out_len, "error: invalid channel %lu\r\n", (unsigned long)ch);
+    ato_cli_core_printf(cli, "error: invalid channel %lu\r\n",
+                        (unsigned long)ch);
   } else {
-    snprintf(out, out_len, "ok raw=%u mv=%lu\r\n", raw,
-             (unsigned long)raw_to_mv(raw));
+    ato_cli_core_printf(cli, "ok raw=%u mv=%lu\r\n", raw,
+                        (unsigned long)raw_to_mv(raw));
   }
-  return pdFALSE;
 }
 
-static BaseType_t dac_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                              const char *cmd_string) {
-  (void)cli;
+static void dac_command(ato_cli_core_t *cli, const char *cmd_string) {
   uint32_t n, ch, mv, channel;
   if (!param_uint(cmd_string, 1, &n) || !param_uint(cmd_string, 2, &ch) ||
       !param_uint(cmd_string, 3, &mv)) {
-    snprintf(out, out_len, "error: invalid parameter\r\n");
-    return pdFALSE;
+    ato_cli_core_printf(cli, "error: invalid parameter\r\n");
+    return;
   }
   if (n < 1 || n > ATO_ANALOG_NB_DAC || s_ctx.cfg->dac[n - 1] == NULL) {
-    snprintf(out, out_len, "error: no DAC%lu\r\n", (unsigned long)n);
-    return pdFALSE;
+    ato_cli_core_printf(cli, "error: no DAC%lu\r\n", (unsigned long)n);
+    return;
   }
   if (!dac_channel_from_number(ch, &channel)) {
-    snprintf(out, out_len, "error: invalid channel %lu\r\n", (unsigned long)ch);
-    return pdFALSE;
+    ato_cli_core_printf(cli, "error: invalid channel %lu\r\n",
+                        (unsigned long)ch);
+    return;
   }
 
   uint32_t raw = mv_to_raw(mv);
@@ -233,16 +224,13 @@ static BaseType_t dac_command(ato_cli_core_t *cli, char *out, size_t out_len,
   dac_set(s_ctx.cfg->dac[n - 1], channel, raw);
   xSemaphoreGive(s_ctx.lock);
 
-  snprintf(out, out_len, "ok raw=%lu mv=%lu\r\n", (unsigned long)raw,
-           (unsigned long)raw_to_mv(raw));
-  return pdFALSE;
+  ato_cli_core_printf(cli, "ok raw=%lu mv=%lu\r\n", (unsigned long)raw,
+                      (unsigned long)raw_to_mv(raw));
 }
 
 /* Scope commands ----------------------------------------------------------- */
 
-static BaseType_t gen_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                              const char *cmd_string) {
-  (void)cli;
+static void gen_command(ato_cli_core_t *cli, const char *cmd_string) {
   shape_t shape;
   uint32_t freq = 0, vpp;
   bool ok;
@@ -260,9 +248,9 @@ static BaseType_t gen_command(ato_cli_core_t *cli, char *out, size_t out_len,
          ato_cli_core_get_parameter(cmd_string, 4, &(BaseType_t){0}) == NULL;
   }
   if (!ok) {
-    snprintf(out, out_len, "error: usage: gen sine|square <Hz> <mVpp> | "
-                           "gen step <mVpp>\r\n");
-    return pdFALSE;
+    ato_cli_core_printf(cli, "error: usage: gen sine|square <Hz> <mVpp> | "
+                             "gen step <mVpp>\r\n");
+    return;
   }
   if (vpp > VREF_MV) {
     vpp = VREF_MV;
@@ -274,9 +262,8 @@ static BaseType_t gen_command(ato_cli_core_t *cli, char *out, size_t out_len,
   s_ctx.vpp_mv = vpp;
   xSemaphoreGive(s_ctx.lock);
 
-  snprintf(out, out_len, "ok shape=%s f=%lu vpp=%lu\r\n", shape_names[shape],
-           (unsigned long)freq, (unsigned long)vpp);
-  return pdFALSE;
+  ato_cli_core_printf(cli, "ok shape=%s f=%lu vpp=%lu\r\n", shape_names[shape],
+                      (unsigned long)freq, (unsigned long)vpp);
 }
 
 // Fill dac_table for the current waveform; returns its length (0: the
@@ -309,18 +296,16 @@ static uint32_t build_table(uint32_t fs, uint32_t n) {
   return len;
 }
 
-static BaseType_t acq_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                              const char *cmd_string) {
-  (void)cli;
+static void acq_command(ato_cli_core_t *cli, const char *cmd_string) {
   const ato_analog_config_t *cfg = s_ctx.cfg;
   uint32_t fs, n;
   if (!param_uint(cmd_string, 1, &fs) || !param_uint(cmd_string, 2, &n) ||
       fs < SCOPE_MIN_FS || fs > SCOPE_MAX_FS || n < SCOPE_MIN_POINTS ||
       n > SCOPE_MAX_POINTS) {
-    snprintf(out, out_len,
-             "error: usage: acq <fs %u..%u> <n %u..%u>\r\n", SCOPE_MIN_FS,
-             SCOPE_MAX_FS, SCOPE_MIN_POINTS, SCOPE_MAX_POINTS);
-    return pdFALSE;
+    ato_cli_core_printf(cli, "error: usage: acq <fs %u..%u> <n %u..%u>\r\n",
+                        SCOPE_MIN_FS, SCOPE_MAX_FS, SCOPE_MIN_POINTS,
+                        SCOPE_MAX_POINTS);
+    return;
   }
 
   xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
@@ -328,10 +313,9 @@ static BaseType_t acq_command(ato_cli_core_t *cli, char *out, size_t out_len,
   uint32_t len = build_table(fs, n);
   if (len == 0) {
     xSemaphoreGive(s_ctx.lock);
-    snprintf(out, out_len,
-             "error: f must be between fs/%u and fs/%u\r\n", SCOPE_MAX_POINTS,
-             SCOPE_MIN_PERIOD);
-    return pdFALSE;
+    ato_cli_core_printf(cli, "error: f must be between fs/%u and fs/%u\r\n",
+                        SCOPE_MAX_POINTS, SCOPE_MIN_PERIOD);
+    return;
   }
 
   // let the circuit settle on the first level
@@ -370,64 +354,42 @@ static BaseType_t acq_command(ato_cli_core_t *cli, char *out, size_t out_len,
   dac_set(cfg->scope_dac, cfg->scope_dac_channel, dac_table[0]);
 
   s_ctx.n = n;
-  s_ctx.dump_pos = 0;
-  s_ctx.dump_header_done = false;
   uint64_t fs_mhz = s_ctx.fs_mhz, f_mhz = s_ctx.f_mhz;
   xSemaphoreGive(s_ctx.lock);
 
-  snprintf(out, out_len, "ok fs=%lu.%03lu f=%lu.%03lu n=%lu\r\n",
-           (unsigned long)(fs_mhz / 1000), (unsigned long)(fs_mhz % 1000),
-           (unsigned long)(f_mhz / 1000), (unsigned long)(f_mhz % 1000),
-           (unsigned long)n);
-  return pdFALSE;
+  ato_cli_core_printf(cli, "ok fs=%lu.%03lu f=%lu.%03lu n=%lu\r\n",
+                      (unsigned long)(fs_mhz / 1000),
+                      (unsigned long)(fs_mhz % 1000),
+                      (unsigned long)(f_mhz / 1000),
+                      (unsigned long)(f_mhz % 1000), (unsigned long)n);
 }
 
-// Multi-call output: the lock is taken on the first call and released on
-// the last one (all calls are made in a row by the same CLI task).
-static BaseType_t dump_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                               const char *cmd_string) {
-  (void)cli;
+static void dump_command(ato_cli_core_t *cli, const char *cmd_string) {
   (void)cmd_string;
   const ato_analog_config_t *cfg = s_ctx.cfg;
 
-  if (!s_ctx.dump_header_done) {
-    xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
-    if (s_ctx.n == 0) {
-      xSemaphoreGive(s_ctx.lock);
-      snprintf(out, out_len, "error: no data, run acq first\r\n");
-      return pdFALSE;
-    }
-    s_ctx.dump_pos = 0;
-    s_ctx.dump_header_done = true;
-    snprintf(out, out_len,
-             "#scope fs=%lu.%03lu n=%lu f=%lu.%03lu shape=%s vpp=%lu "
-             "vref=%u full=%u in=%s out=%s\r\n",
-             (unsigned long)(s_ctx.fs_mhz / 1000),
-             (unsigned long)(s_ctx.fs_mhz % 1000), (unsigned long)s_ctx.n,
-             (unsigned long)(s_ctx.f_mhz / 1000),
-             (unsigned long)(s_ctx.f_mhz % 1000), shape_names[s_ctx.shape],
-             (unsigned long)s_ctx.vpp_mv, VREF_MV, FULL_SCALE,
-             cfg->scope_in_label, cfg->scope_out_label);
-    return pdTRUE;
+  // held during the whole output: the data cannot change meanwhile
+  xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
+  if (s_ctx.n == 0) {
+    xSemaphoreGive(s_ctx.lock);
+    ato_cli_core_printf(cli, "error: no data, run acq first\r\n");
+    return;
   }
-
-  static const size_t line_len = sizeof("000,000\r\n") - 1;
-  size_t used = 0;
-  while (s_ctx.dump_pos < s_ctx.n && used + line_len < out_len) {
-    const uint16_t *p = &samples[2 * s_ctx.dump_pos];
-    used += snprintf(out + used, out_len - used, "%03X,%03X\r\n", p[0], p[1]);
-    s_ctx.dump_pos++;
+  ato_cli_core_printf(
+      cli,
+      "#scope fs=%lu.%03lu n=%lu f=%lu.%03lu shape=%s vpp=%lu "
+      "vref=%u full=%u in=%s out=%s\r\n",
+      (unsigned long)(s_ctx.fs_mhz / 1000),
+      (unsigned long)(s_ctx.fs_mhz % 1000), (unsigned long)s_ctx.n,
+      (unsigned long)(s_ctx.f_mhz / 1000), (unsigned long)(s_ctx.f_mhz % 1000),
+      shape_names[s_ctx.shape], (unsigned long)s_ctx.vpp_mv, VREF_MV,
+      FULL_SCALE, cfg->scope_in_label, cfg->scope_out_label);
+  for (uint32_t i = 0; i < s_ctx.n; i++) {
+    const uint16_t *p = &samples[2 * i];
+    ato_cli_core_printf(cli, "%03X,%03X\r\n", p[0], p[1]);
   }
-  if (s_ctx.dump_pos < s_ctx.n) {
-    return pdTRUE;
-  }
-  if (used + sizeof("#end\r\n") > out_len) {
-    return pdTRUE; // "#end" on the next call
-  }
-  snprintf(out + used, out_len - used, "#end\r\n");
-  s_ctx.dump_header_done = false;
+  ato_cli_core_puts(cli, "#end\r\n");
   xSemaphoreGive(s_ctx.lock);
-  return pdFALSE;
 }
 
 /* Setup -------------------------------------------------------------------- */

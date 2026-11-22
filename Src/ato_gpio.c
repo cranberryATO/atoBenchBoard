@@ -14,12 +14,9 @@ static struct gpio_definition {
   GPIO_TypeDef *addr;
 } GPIO_ADDRESSES[] = {{"GPIOA", GPIOA}};
 
-static BaseType_t gshow_command(ato_cli_core_t *cli, char *out, size_t out_len,
-                                const char *cmd_string) {
-  (void)cli;
-  int n = snprintf(out, out_len, "GPIO state\r\n");
-  out += n;
-  out_len -= n;
+static void gshow_command(ato_cli_core_t *cli, const char *cmd_string) {
+  (void)cmd_string;
+  ato_cli_core_puts(cli, "GPIO state\r\n");
   FOR_EACH(GPIO_ADDRESSES, gpio) {
     for (int pin = 0; pin < 16; pin++) {
       uint32_t bsr = 1 << pin;
@@ -29,13 +26,11 @@ static BaseType_t gshow_command(ato_cli_core_t *cli, char *out, size_t out_len,
                                          bsr); // _8_15 for pins 8..15
       uint32_t pull = LL_GPIO_GetPinPull(gpio->addr, bsr);
       uint32_t lvl = LL_GPIO_IsInputPinSet(gpio->addr, bsr);
-      n = snprintf(out, out_len, "%s PIN %d %x %x %x %x\r\n", gpio->name, pin,
-                   mode, af, pull, lvl);
-      out += n;
-      out_len -= n;
+      ato_cli_core_printf(cli, "%s PIN %d %lx %lx %lx %lx\r\n", gpio->name,
+                          pin, (unsigned long)mode, (unsigned long)af,
+                          (unsigned long)pull, (unsigned long)lvl);
     }
   }
-  return pdFALSE;
 }
 
 ATO_CLI_TABLE(gpio_commands, ATO_GPIO_COMMANDS);
