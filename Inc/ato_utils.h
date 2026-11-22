@@ -14,4 +14,5 @@
 #define FOR_EACH(table, iterator) \
   for (__typeof(&(table)[0]) iterator = &(table)[0]; iterator < &(table)[COUNT_OF(table)]; iterator++)
 
+
 #endif /* ATO_UTILS_H */
