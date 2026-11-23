@@ -17,7 +17,7 @@
         "port=SWD",
         "mode=UR",
         "-w",
-        "${workspaceFolder}/build/Debug/FreeRTOS_UART_VC.elf",
+        "${workspaceFolder}/build/Debug/atoBenchBoard.elf",
         "-v",
         "-rst"
       ],

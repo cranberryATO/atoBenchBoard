@@ -19,10 +19,10 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "ato_gpio.h"
 #include "cmsis_os.h"
 #include "main.h"
 #include "task.h"
+
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -30,10 +30,12 @@
 #include "ato_analog.h"
 #include "ato_cli.h"
 #include "ato_error.h"
+#include "ato_gpio.h"
 #include "dac.h"
 #include "tim.h"
 #include "usart.h"
 #include "usb_device.h"
+
 
 /* USER CODE END Includes */
 
