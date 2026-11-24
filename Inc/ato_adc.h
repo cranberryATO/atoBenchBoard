@@ -26,6 +26,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define ATO_ADC_MAX_CHANNEL 18 // highest channel number of ato_adc_read()
+
 typedef struct {
   ADC_HandleTypeDef *hadc;
   SemaphoreHandle_t done; // given by the ISR at end of conversion / DMA

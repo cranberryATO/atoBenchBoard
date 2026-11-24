@@ -13,15 +13,18 @@
 #define CLI_STACK_WORDS 512 // 2 KB: vsnprintf
 #define CLI_PRIORITY (tskIDLE_PRIORITY + 1)
 
-static void ps_command(ato_cli_core_t *cli, const char *cmd_string);
-static void so_command(ato_cli_core_t *cli, const char *cmd_string);
-static void stats_command(ato_cli_core_t *cli, const char *cmd_string);
+static void ps_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
+                       uint8_t argc);
+static void so_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
+                       uint8_t argc);
+static void stats_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
+                          uint8_t argc);
 
 static const ato_cli_command_t cli_commands[] = {
-    {"ps", "\r\nps:\r\n Show FreeRTOS Tasks\r\n\r\n", ps_command, 0},
-    {"so", "\r\nso:\r\n Stack Overflow\r\n\r\n", so_command, 0},
-    {"stats", "\r\nstats:\r\n Show UART error and drop counters\r\n\r\n",
-     stats_command, 0}};
+    {"ps", "Show the FreeRTOS tasks", ps_command},
+    {"so", "Overflow the stack of this task (test)", so_command},
+    {"stats", "Show the UART error and drop counters", stats_command},
+};
 
 struct ato_cli_ctx {
   ato_uart_t uart;    // byte stream
@@ -56,8 +59,10 @@ static char task_state_char(eTaskState state) {
 }
 
 // Same columns as vTaskList(), which needs an unbounded output buffer.
-static void ps_command(ato_cli_core_t *cli, const char *cmd_string) {
-  (void)cmd_string;
+static void ps_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
+                       uint8_t argc) {
+  (void)args;
+  (void)argc;
   // margin for tasks created between the count and the snapshot
   UBaseType_t size = uxTaskGetNumberOfTasks() + 2;
   TaskStatus_t *tasks = pvPortMalloc(size * sizeof(*tasks));
@@ -79,9 +84,11 @@ static void ps_command(ato_cli_core_t *cli, const char *cmd_string) {
   vPortFree(tasks);
 }
 
-static void so_command(ato_cli_core_t *cli, const char *cmd_string) {
+static void so_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
+                       uint8_t argc) {
   (void)cli;
-  (void)cmd_string;
+  (void)args;
+  (void)argc;
   volatile int onStack[512]; // 2 KB: the whole task stack
   for (int i = 0; i < 512; i++) {
     onStack[i] = 0xbaadfeed;
@@ -89,8 +96,10 @@ static void so_command(ato_cli_core_t *cli, const char *cmd_string) {
   (void)onStack[0];
 }
 
-static void stats_command(ato_cli_core_t *cli, const char *cmd_string) {
-  (void)cmd_string;
+static void stats_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
+                          uint8_t argc) {
+  (void)args;
+  (void)argc;
   const ato_cli_ctx_t *ctx = ato_cli_core_user(cli);
   const ato_uart_t *u = &ctx->uart;
   ato_cli_core_printf(cli, "tx dropped bytes : %lu\r\n",
@@ -113,7 +122,7 @@ static void uart_write(void *arg, const char *data, size_t len) {
 
 /* Line editor -------------------------------------------------------------- */
 
-static void cli_run(ato_cli_ctx_t *ctx, const char *command) {
+static void cli_run(ato_cli_ctx_t *ctx, char *command) {
   ato_cli_core_process(&ctx->cli, command);
 }
 
@@ -138,6 +147,7 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
       }
       ctx->cmd_idx = 0;
       ctx->discard = 0;
+      ato_cli_core_prompt(&ctx->cli);
       continue;
     }
     ctx->last_char_cr = 0;
@@ -159,8 +169,7 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
     }
 
     if (ctx->cmd_idx >= sizeof(ctx->cmd_buf) - 1) {
-      ato_uart_write_string(u,
-                            "\r\nError: command too long, line ignored.\r\n");
+      ato_uart_write_string(u, "\r\nerror: command too long, line ignored\r\n");
       ctx->discard = 1;
       continue;
     }
@@ -179,6 +188,7 @@ static void cli_task(void *argument) {
   if (ato_uart_start_rx(&ctx->uart, xTaskGetCurrentTaskHandle()) != HAL_OK) {
     fatalError("%s: UART RX DMA start failed", pcTaskGetName(NULL));
   }
+  ato_cli_core_prompt(&ctx->cli);
   for (;;) {
     const uint8_t *data;
     uint32_t n = ato_uart_rx_peek(&ctx->uart, &data);

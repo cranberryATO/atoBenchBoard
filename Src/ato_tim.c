@@ -3,8 +3,10 @@
 #include "stm32g4xx_hal_tim.h"
 #include "tim.h"
 
-static void pwminit_command(ato_cli_core_t *cli, const char *cmd_string) {
-  (void)cmd_string;
+static void pwminit_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
+                            uint8_t argc) {
+  (void)args;
+  (void)argc;
   ato_cli_core_puts(cli, "PWM\r\n");
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
 }

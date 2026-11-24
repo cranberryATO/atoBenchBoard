@@ -6,7 +6,9 @@
  * Modified: all mutable state moved into a per-instance context
  * (ato_cli_core_t), so that several interpreters can run concurrently;
  * command handlers write their output through a callback instead of filling
- * a buffer over several calls.
+ * a buffer over several calls; typed parameters, parsed and checked before
+ * the handler is called; multi-word commands grouped in menus; generated
+ * help.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,15 +32,37 @@
  * https://github.com/FreeRTOS
  */
 
+/*
+ * Syntax and menus
+ * ----------------
+ * A line is a list of words separated by spaces. A command name is made of
+ * one or more words ("ps", "gen sine"); its parameters follow it.
+ *
+ * Menus are implicit: the words shared by several command names form a menu
+ * ("gen" for "gen sine" and "gen step"). Entering only a menu name enters the
+ * menu, which is shown in the prompt ("gen> "). In the menu M, the input
+ * "X ..." is looked up as "M X ..." first, then as "X ..." from the root: the
+ * root commands and the full command names work from any menu.
+ *   ".."  goes up one level, "/" goes back to the root.
+ *
+ * Every error message starts with "error:".
+ */
+
 #ifndef ATO_CLI_CORE_H
 #define ATO_CLI_CORE_H
 
 #include "FreeRTOS.h"
+#include "ato_utils.h" // COUNT_OF
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #ifndef ATO_CLI_PRINTF_SIZE
 #define ATO_CLI_PRINTF_SIZE 128 // longest line of ato_cli_core_printf()
+#endif
+
+#ifndef ATO_CLI_MAX_WORDS
+#define ATO_CLI_MAX_WORDS 10 // words per line, command name included
 #endif
 
 typedef struct ato_cli_core ato_cli_core_t;
@@ -49,31 +73,91 @@ typedef struct ato_cli_core ato_cli_core_t;
  */
 typedef void (*ato_cli_write_fn)(void *arg, const char *data, size_t len);
 
+/* Parameters --------------------------------------------------------------- */
+
+typedef enum {
+  ATO_CLI_PARAM_INT,    // decimal or 0x hexadecimal, k and M suffixes
+  ATO_CLI_PARAM_ENUM,   // one word of a list
+  ATO_CLI_PARAM_STRING, // any word
+} ato_cli_param_type_t;
+
+/** Description of a command parameter, meant to be a const global. */
+typedef struct {
+  const char *name; // short, shown in the usage: "<name>"
+  const char *help; // one line, shown by "help <command>"
+  ato_cli_param_type_t type;
+  bool optional; // optional parameters must be the last ones
+  union {
+    struct {
+      int32_t min, max;
+    } i; // ATO_CLI_PARAM_INT: accepted range, bounds included
+    struct {
+      uint8_t count;
+      const char *const *values;
+    } e; // ATO_CLI_PARAM_ENUM: accepted words
+  };
+} ato_cli_param_t;
+
+// Parameter descriptors, for a `static const ato_cli_param_t xxx[]` table.
+#define ATO_CLI_INT(name_, help_, min_, max_)                                  \
+  {                                                                            \
+    .name = (name_), .help = (help_), .type = ATO_CLI_PARAM_INT, .i = {        \
+      (min_),                                                                  \
+      (max_)                                                                   \
+    }                                                                          \
+  }
+// `values_`: a `static const char *const []` array.
+#define ATO_CLI_ENUM(name_, help_, values_)                                    \
+  {                                                                            \
+    .name = (name_), .help = (help_), .type = ATO_CLI_PARAM_ENUM, .e = {       \
+      COUNT_OF(values_),                                                       \
+      (values_)                                                                \
+    }                                                                          \
+  }
+#define ATO_CLI_STRING(name_, help_)                                           \
+  {.name = (name_), .help = (help_), .type = ATO_CLI_PARAM_STRING}
+// For an optional parameter, write the initializer with `.optional = true`.
+
+/** Value of a parameter, converted according to its type. */
+typedef union {
+  int32_t i;     // ATO_CLI_PARAM_INT
+  uint8_t e;     // ATO_CLI_PARAM_ENUM: index in `values`
+  const char *s; // ATO_CLI_PARAM_STRING: the word, null-terminated
+} ato_cli_arg_t;
+
+/* Commands ----------------------------------------------------------------- */
+
 /**
- * Command handler. Writes its output with ato_cli_core_write(), _puts() or
- * _printf(), as much as it wants, and returns when the command is done.
- * `cli` is the interpreter running the command; use ato_cli_core_user() to
- * reach the owner context.
+ * Command handler, called once the parameters have been checked.
+ * `args[0..argc-1]`: the values of the parameters given (argc is less than
+ * the number of parameters when optional ones are missing).
+ * Writes its output with ato_cli_core_write(), _puts() or _printf(), as much
+ * as it wants, and returns when the command is done. `cli` is the
+ * interpreter running the command; use ato_cli_core_user() to reach the
+ * owner context.
  */
-typedef void (*ato_cli_command_fn)(ato_cli_core_t *cli, const char *cmd_string);
+typedef void (*ato_cli_command_fn)(ato_cli_core_t *cli,
+                                   const ato_cli_arg_t *args, uint8_t argc);
 
 /** Command descriptor, meant to be a const global. */
 typedef struct {
-  const char *const command; // must be all lower case, e.g. "help"
-  const char *const help;    // should end with "\r\n"
-  const ato_cli_command_fn handler;
-  int8_t expected_params; // fixed number of parameters, or -1 for variable
+  const char *command; // lower case words separated by one space, "gpio show"
+  const char *help;    // one line, without "\r\n"
+  ato_cli_command_fn handler;
+  const ato_cli_param_t *params; // NULL if none
+  uint8_t nb_params;
 } ato_cli_command_t;
 
-// X-macro helpers: X(name, help, handler, param_count)
-#define ATO_CLI_X_COUNT(name, help, handler, params) +1
-#define ATO_CLI_X_DEF(name, help, handler, params)                             \
-  {(name), (help), (handler), (params)},
+// X-macro helpers: X(name, help, handler) or X(name, help, handler, params),
+// `params` being a `static const ato_cli_param_t []` array.
+#define ATO_CLI_X_COUNT(...) +1
+#define ATO_CLI_X_DEF(name, help, handler, ...)                                \
+  {(name), (help), (handler)__VA_OPT__(, (__VA_ARGS__), COUNT_OF(__VA_ARGS__))},
 
 // Context member declaration (use in the .h in the context struct)
 #define ATO_CLI_ITEMS(list)                                                    \
   ato_cli_list_item_t cmd_items[0 list(ATO_CLI_X_COUNT)]
-// Command table definition (use in the .c)
+// Command table definition (use in the .c, after the parameter tables)
 #define ATO_CLI_TABLE(table, list)                                             \
   static const ato_cli_command_t table[] = {list(ATO_CLI_X_DEF)}
 
@@ -90,12 +174,14 @@ struct ato_cli_core {
   ato_cli_write_fn write;               // output sink
   void *write_arg;                      // its argument (e.g. the UART instance)
   void *user;                           // owner context, for command handlers
+  const char *menu;                     // current menu: the first `menu_len`
+  size_t menu_len;                      // chars of a command name; 0: root
   char printf_buf[ATO_CLI_PRINTF_SIZE]; // formatting buffer of _printf()
 };
 
 /**
  * Initialise an interpreter: empty command list (except "help"), output
- * sent to `write(write_arg, ...)`.
+ * sent to `write(write_arg, ...)`, root menu.
  */
 void ato_cli_core_init(ato_cli_core_t *cli, void *user, ato_cli_write_fn write,
                        void *write_arg);
@@ -111,12 +197,16 @@ void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
                            ato_cli_list_item_t *item);
 
 /**
- * Run the command line `input`; returns when the command is done and all its
- * output has been given to the write callback.
+ * Run the command line `line`; returns when the command is done and all its
+ * output has been given to the write callback. `line` is modified (split
+ * into words in place).
  * Reentrant: distinct `cli` contexts can be used concurrently; a given
  * context must only be used by one task at a time.
  */
-void ato_cli_core_process(ato_cli_core_t *cli, const char *input);
+void ato_cli_core_process(ato_cli_core_t *cli, char *line);
+
+/** Write the prompt: "> ", or "<menu>> " in a menu. */
+void ato_cli_core_prompt(ato_cli_core_t *cli);
 
 /** Output of a command: `len` bytes. */
 void ato_cli_core_write(ato_cli_core_t *cli, const char *data, size_t len);
@@ -134,14 +224,5 @@ void ato_cli_core_printf(ato_cli_core_t *cli, const char *fmt, ...)
 
 /** Owner context given to ato_cli_core_init(). */
 void *ato_cli_core_user(const ato_cli_core_t *cli);
-
-/**
- * Return a pointer to the `wanted`'th word (1 = first parameter) of
- * `cmd_string`, and its length in `*param_len`; NULL if absent.
- * Pure function: it needs no interpreter context.
- */
-const char *ato_cli_core_get_parameter(const char *cmd_string,
-                                       UBaseType_t wanted,
-                                       BaseType_t *param_len);
 
 #endif /* ATO_CLI_CORE_H */

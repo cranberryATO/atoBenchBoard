@@ -73,8 +73,10 @@ static uint32_t get_available_pins(GPIO_TypeDef *addr) {
   }
 }
 
-static void gshow_command(ato_cli_core_t *cli, const char *cmd_string) {
-  (void)cmd_string;
+static void gshow_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
+                          uint8_t argc) {
+  (void)args;
+  (void)argc;
   ato_cli_core_puts(cli, "GPIOx PIN MODE PUL LVL ALTERNATE_FUNC \r\n");
   for (int i = 0; i < COUNT_OF(GPIO_ADDRESSES); i++) {
     const struct gpio_definition *gpio = &GPIO_ADDRESSES[i];

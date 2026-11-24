@@ -9,8 +9,6 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #define VREF_MV 3300    // VDDA on the Nucleo board (assumed, not measured)
 #define FULL_SCALE 4095 // 12 bits, for both ADC and DAC
@@ -27,27 +25,51 @@
 typedef enum { SHAPE_SINE, SHAPE_SQUARE, SHAPE_STEP } shape_t;
 static const char *const shape_names[] = {"sine", "square", "step"};
 
-static void adc_command(ato_cli_core_t *cli, const char *cmd_string);
-static void dac_command(ato_cli_core_t *cli, const char *cmd_string);
-static void gen_command(ato_cli_core_t *cli, const char *cmd_string);
-static void acq_command(ato_cli_core_t *cli, const char *cmd_string);
-static void dump_command(ato_cli_core_t *cli, const char *cmd_string);
+#define ANALOG_HANDLER(fn)                                                     \
+  static void fn(ato_cli_core_t *cli, const ato_cli_arg_t *args, uint8_t argc)
+ANALOG_HANDLER(adc_command);
+ANALOG_HANDLER(dac_command);
+ANALOG_HANDLER(gen_sine_command);
+ANALOG_HANDLER(gen_square_command);
+ANALOG_HANDLER(gen_step_command);
+ANALOG_HANDLER(acq_command);
+ANALOG_HANDLER(dump_command);
 
-static const ato_cli_command_t analog_commands[] = {
-    {"adc", "\r\nadc <n> <ch>:\r\n Read ADCn channel ch (raw and mV)\r\n\r\n",
-     adc_command, 2},
-    {"dac",
-     "\r\ndac <n> <ch> <mV>:\r\n Set DACn channel ch (0..3300 mV)\r\n\r\n",
-     dac_command, 3},
-    {"gen",
-     "\r\ngen sine|square <Hz> <mVpp> | gen step <mVpp>:\r\n Waveform of the "
-     "next acquisition, centered on 1650 mV\r\n\r\n",
-     gen_command, -1},
-    {"acq",
-     "\r\nacq <fs> <n>:\r\n Generate and acquire n points at fs Hz\r\n\r\n",
-     acq_command, 2},
-    {"dump", "\r\ndump:\r\n Dump the last acquisition (hex CSV in,out)\r\n\r\n",
-     dump_command, 0}};
+static const ato_cli_param_t adc_params[] = {
+    ATO_CLI_INT("n", "ADC number", 1, ATO_ANALOG_NB_ADC),
+    ATO_CLI_INT("ch", "channel", 1, ATO_ADC_MAX_CHANNEL),
+};
+static const ato_cli_param_t dac_params[] = {
+    ATO_CLI_INT("n", "DAC number", 1, ATO_ANALOG_NB_DAC),
+    ATO_CLI_INT("ch", "channel", 1, 2),
+    ATO_CLI_INT("mv", "output voltage (mV)", 0, VREF_MV),
+};
+static const ato_cli_param_t gen_periodic_params[] = {
+    ATO_CLI_INT("f", "frequency (Hz)", 1, SCOPE_MAX_FS / SCOPE_MIN_PERIOD),
+    ATO_CLI_INT("vpp", "peak to peak amplitude (mV)", 0, VREF_MV),
+};
+static const ato_cli_param_t gen_step_params[] = {
+    ATO_CLI_INT("vpp", "step height (mV)", 0, VREF_MV),
+};
+static const ato_cli_param_t acq_params[] = {
+    ATO_CLI_INT("fs", "sample rate (Hz)", SCOPE_MIN_FS, SCOPE_MAX_FS),
+    ATO_CLI_INT("n", "number of points", SCOPE_MIN_POINTS, SCOPE_MAX_POINTS),
+};
+
+#define ANALOG_COMMANDS(X)                                                     \
+  X("adc", "Read an ADC channel (raw and mV)", adc_command, adc_params)        \
+  X("dac", "Set a DAC channel", dac_command, dac_params)                       \
+  X("gen sine", "Sine of the next acquisition, centered on 1650 mV",           \
+    gen_sine_command, gen_periodic_params)                                     \
+  X("gen square", "Square of the next acquisition, centered on 1650 mV",       \
+    gen_square_command, gen_periodic_params)                                   \
+  X("gen step", "Step of the next acquisition, centered on 1650 mV",           \
+    gen_step_command, gen_step_params)                                         \
+  X("acq", "Generate the waveform and acquire n points at fs Hz", acq_command, \
+    acq_params)                                                                \
+  X("dump", "Dump the last acquisition (hex CSV in,out)", dump_command)
+
+ATO_CLI_TABLE(analog_commands, ANALOG_COMMANDS);
 
 typedef struct {
   const ato_analog_config_t *cfg;
@@ -86,41 +108,6 @@ static uint32_t raw_to_mv(uint32_t raw) { return raw * VREF_MV / FULL_SCALE; }
 
 static uint16_t clamp_raw(int32_t raw) {
   return raw < 0 ? 0 : raw > FULL_SCALE ? FULL_SCALE : (uint16_t)raw;
-}
-
-// Parse parameter `index` as an unsigned decimal number.
-static bool param_uint(const char *cmd_string, UBaseType_t index,
-                       uint32_t *value) {
-  BaseType_t len;
-  const char *p = ato_cli_core_get_parameter(cmd_string, index, &len);
-  if (p == NULL) {
-    return false;
-  }
-  char *end;
-  unsigned long v = strtoul(p, &end, 10);
-  if (end != p + len) {
-    return false;
-  }
-  *value = v;
-  return true;
-}
-
-static bool param_is(const char *cmd_string, UBaseType_t index,
-                     const char *word) {
-  BaseType_t len;
-  const char *p = ato_cli_core_get_parameter(cmd_string, index, &len);
-  return p != NULL && (size_t)len == strlen(word) && strncmp(p, word, len) == 0;
-}
-
-static bool dac_channel_from_number(uint32_t ch, uint32_t *channel) {
-  if (ch == 1) {
-    *channel = DAC_CHANNEL_1;
-  } else if (ch == 2) {
-    *channel = DAC_CHANNEL_2;
-  } else {
-    return false;
-  }
-  return true;
 }
 
 static void dac_set(DAC_HandleTypeDef *hdac, uint32_t channel, uint32_t raw) {
@@ -170,13 +157,10 @@ static uint64_t tim_set_rate(TIM_HandleTypeDef *htim, uint32_t fs) {
 
 /* Unit commands ------------------------------------------------------------ */
 
-static void adc_command(ato_cli_core_t *cli, const char *cmd_string) {
-  uint32_t n, ch;
-  if (!param_uint(cmd_string, 1, &n) || !param_uint(cmd_string, 2, &ch)) {
-    ato_cli_core_printf(cli, "error: invalid parameter\r\n");
-    return;
-  }
-  if (n < 1 || n > ATO_ANALOG_NB_ADC || s_ctx.cfg->adc[n - 1] == NULL) {
+ANALOG_HANDLER(adc_command) {
+  (void)argc;
+  uint32_t n = args[0].i, ch = args[1].i;
+  if (s_ctx.cfg->adc[n - 1] == NULL) {
     ato_cli_core_printf(cli, "error: no ADC%lu\r\n", (unsigned long)n);
     return;
   }
@@ -201,20 +185,12 @@ static void adc_command(ato_cli_core_t *cli, const char *cmd_string) {
   }
 }
 
-static void dac_command(ato_cli_core_t *cli, const char *cmd_string) {
-  uint32_t n, ch, mv, channel;
-  if (!param_uint(cmd_string, 1, &n) || !param_uint(cmd_string, 2, &ch) ||
-      !param_uint(cmd_string, 3, &mv)) {
-    ato_cli_core_printf(cli, "error: invalid parameter\r\n");
-    return;
-  }
-  if (n < 1 || n > ATO_ANALOG_NB_DAC || s_ctx.cfg->dac[n - 1] == NULL) {
+ANALOG_HANDLER(dac_command) {
+  (void)argc;
+  uint32_t n = args[0].i, mv = args[2].i;
+  uint32_t channel = args[1].i == 1 ? DAC_CHANNEL_1 : DAC_CHANNEL_2;
+  if (s_ctx.cfg->dac[n - 1] == NULL) {
     ato_cli_core_printf(cli, "error: no DAC%lu\r\n", (unsigned long)n);
-    return;
-  }
-  if (!dac_channel_from_number(ch, &channel)) {
-    ato_cli_core_printf(cli, "error: invalid channel %lu\r\n",
-                        (unsigned long)ch);
     return;
   }
 
@@ -230,32 +206,8 @@ static void dac_command(ato_cli_core_t *cli, const char *cmd_string) {
 
 /* Scope commands ----------------------------------------------------------- */
 
-static void gen_command(ato_cli_core_t *cli, const char *cmd_string) {
-  shape_t shape;
-  uint32_t freq = 0, vpp;
-  bool ok;
-
-  if (param_is(cmd_string, 1, "step")) {
-    shape = SHAPE_STEP;
-    ok = param_uint(cmd_string, 2, &vpp) &&
-         ato_cli_core_get_parameter(cmd_string, 3, &(BaseType_t){0}) == NULL;
-  } else {
-    shape = param_is(cmd_string, 1, "sine") ? SHAPE_SINE : SHAPE_SQUARE;
-    ok = (param_is(cmd_string, 1, "sine") ||
-          param_is(cmd_string, 1, "square")) &&
-         param_uint(cmd_string, 2, &freq) && freq > 0 &&
-         param_uint(cmd_string, 3, &vpp) &&
-         ato_cli_core_get_parameter(cmd_string, 4, &(BaseType_t){0}) == NULL;
-  }
-  if (!ok) {
-    ato_cli_core_printf(cli, "error: usage: gen sine|square <Hz> <mVpp> | "
-                             "gen step <mVpp>\r\n");
-    return;
-  }
-  if (vpp > VREF_MV) {
-    vpp = VREF_MV;
-  }
-
+static void gen_set(ato_cli_core_t *cli, shape_t shape, uint32_t freq,
+                    uint32_t vpp) {
   xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
   s_ctx.shape = shape;
   s_ctx.freq_hz = freq;
@@ -264,6 +216,21 @@ static void gen_command(ato_cli_core_t *cli, const char *cmd_string) {
 
   ato_cli_core_printf(cli, "ok shape=%s f=%lu vpp=%lu\r\n", shape_names[shape],
                       (unsigned long)freq, (unsigned long)vpp);
+}
+
+ANALOG_HANDLER(gen_sine_command) {
+  (void)argc;
+  gen_set(cli, SHAPE_SINE, args[0].i, args[1].i);
+}
+
+ANALOG_HANDLER(gen_square_command) {
+  (void)argc;
+  gen_set(cli, SHAPE_SQUARE, args[0].i, args[1].i);
+}
+
+ANALOG_HANDLER(gen_step_command) {
+  (void)argc;
+  gen_set(cli, SHAPE_STEP, 0, args[0].i);
 }
 
 // Fill dac_table for the current waveform; returns its length (0: the
@@ -296,17 +263,10 @@ static uint32_t build_table(uint32_t fs, uint32_t n) {
   return len;
 }
 
-static void acq_command(ato_cli_core_t *cli, const char *cmd_string) {
+ANALOG_HANDLER(acq_command) {
+  (void)argc;
   const ato_analog_config_t *cfg = s_ctx.cfg;
-  uint32_t fs, n;
-  if (!param_uint(cmd_string, 1, &fs) || !param_uint(cmd_string, 2, &n) ||
-      fs < SCOPE_MIN_FS || fs > SCOPE_MAX_FS || n < SCOPE_MIN_POINTS ||
-      n > SCOPE_MAX_POINTS) {
-    ato_cli_core_printf(cli, "error: usage: acq <fs %u..%u> <n %u..%u>\r\n",
-                        SCOPE_MIN_FS, SCOPE_MAX_FS, SCOPE_MIN_POINTS,
-                        SCOPE_MAX_POINTS);
-    return;
-  }
+  uint32_t fs = args[0].i, n = args[1].i;
 
   xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
 
@@ -364,8 +324,9 @@ static void acq_command(ato_cli_core_t *cli, const char *cmd_string) {
                       (unsigned long)(f_mhz % 1000), (unsigned long)n);
 }
 
-static void dump_command(ato_cli_core_t *cli, const char *cmd_string) {
-  (void)cmd_string;
+ANALOG_HANDLER(dump_command) {
+  (void)args;
+  (void)argc;
   const ato_analog_config_t *cfg = s_ctx.cfg;
 
   // held during the whole output: the data cannot change meanwhile

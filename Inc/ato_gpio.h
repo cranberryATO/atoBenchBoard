@@ -4,7 +4,7 @@
 #include "ato_cli.h"
 
 #define ATO_GPIO_COMMANDS(X)                                                   \
-  X("gshow", "\r\ngshow:\r\n Show GPIOs configuration\r\n\r\n", gshow_command, 0)
+  X("gpio show", "Show the GPIOs configuration", gshow_command)
 
 typedef struct ato_gpio_ctx {
   ATO_CLI_ITEMS(ATO_GPIO_COMMANDS);

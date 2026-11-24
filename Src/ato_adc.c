@@ -5,7 +5,6 @@
 #include <string.h>
 
 #define ATO_ADC_TIMEOUT_MS 10 // a single conversion takes a few microseconds
-#define ATO_ADC_MAX_CHANNEL 18
 
 // Instances attached to an ADC, indexed by ADC peripheral (not by HAL handle
 // name, so this module does not depend on CubeMX naming). The contexts are

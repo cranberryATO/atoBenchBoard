@@ -10,7 +10,7 @@
  * Commands (every reply line starts with "ok" or "error:"):
  *   adc <n> <ch>               read ADCn channel ch (software-triggered ADC)
  *   dac <n> <ch> <mV>          set DACn channel ch
- *   gen sine|square <Hz> <mVpp>, gen step <mVpp>
+ *   gen sine <Hz> <mVpp>, gen square <Hz> <mVpp>, gen step <mVpp>
  *                              waveform for the next acquisition, centered
  *                              on VREF/2
  *   acq <fs> <n>               acquire n points at fs Hz
