@@ -1,12 +1,11 @@
 """Drive the STM32 analog scope through its CLI and plot the curves.
 
 The board generates a waveform on the DAC, samples the input and the output
-of the circuit under test with the ADC, and dumps the points as hex CSV:
+of the circuit under test with the ADC, and dumps the points. The CLI is put
+in json mode: each command gets one JSON object on one line, whose "ok"
+member tells if the rest is valid:
 
-    #scope fs=20000.000 n=2000 f=0.000 shape=step vpp=2000 vref=3300 ...
-    3FF,400
-    ...
-    #end
+    {"fs":20000.000,"n":2000,...,"in":[1023,...],"out":[1022,...],"ok":true}
 
 Examples:
     uv run scope.py --port /dev/ttyACM0 --shape step --vpp 2000 \
@@ -17,6 +16,7 @@ Examples:
 
 import argparse
 import csv
+import json
 import math
 import sys
 
@@ -25,18 +25,21 @@ import numpy as np
 import serial
 
 
-class Scope:
-    """Command / response exchange with the CLI.
-
-    Every analog command answers one line starting with "ok" or "error:";
-    the echo of the command and any other text are ignored.
-    """
+class Cli:
+    """Command / reply exchange with the CLI, in json mode."""
 
     def __init__(self, port: str, baudrate: int, timeout: float):
         self.ser = serial.Serial(port, baudrate, timeout=timeout)
+        self.baudrate = baudrate
         # flush a partially typed line and any pending output
         self.ser.write(b"\r")
         self.ser.reset_input_buffer()
+        # still in plain mode until this command: skip its echo
+        self.ser.write(b"mode json\r")
+        while True:
+            reply = self._parse(self._readline())
+            if reply is not None and reply.get("mode") == "json":
+                break
 
     def _readline(self) -> str:
         line = self.ser.readline()
@@ -44,37 +47,41 @@ class Scope:
             raise TimeoutError("no answer from the board")
         return line.decode("ascii", errors="replace").strip()
 
-    def command(self, cmd: str) -> str:
-        self.ser.reset_input_buffer()
-        self.ser.write((cmd + "\r").encode("ascii"))
-        while True:
-            line = self._readline()
-            if line.startswith("ok"):
-                return line
-            if line.startswith("error:"):
-                raise RuntimeError(f"{cmd!r}: {line}")
+    @staticmethod
+    def _parse(line: str) -> dict | None:
+        try:
+            reply = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        return reply if isinstance(reply, dict) else None
 
-    def dump(self) -> tuple[dict, np.ndarray]:
+    def command(self, cmd: str, reply_bytes: int = 0) -> dict:
+        """Send `cmd`, return its reply; raise if it is not ok.
+
+        `reply_bytes`: expected size of the reply, to extend the timeout
+        for long transfers (the timeout covers the whole line)."""
         self.ser.reset_input_buffer()
-        self.ser.write(b"dump\r")
-        while True:
+        timeout = self.ser.timeout
+        self.ser.timeout = timeout + 1.5 * reply_bytes * 10 / self.baudrate
+        try:
+            self.ser.write((cmd + "\r").encode("ascii"))
             line = self._readline()
-            if line.startswith("error:"):
-                raise RuntimeError(f"'dump': {line}")
-            if line.startswith("#scope"):
-                break
-        header = dict(item.split("=", 1) for item in line.split()[1:])
-        points = []
-        while True:
-            line = self._readline()
-            if line == "#end":
-                break
-            a, b = line.split(",")
-            points.append((int(a, 16), int(b, 16)))
-        data = np.array(points, dtype=float)
-        if len(data) != int(header["n"]):
-            raise RuntimeError(f"expected {header['n']} points, got {len(data)}")
-        return header, data
+        finally:
+            self.ser.timeout = timeout
+        reply = self._parse(line)
+        if reply is None:
+            raise RuntimeError(f"{cmd!r}: not a JSON reply: {line[:80]!r}")
+        if reply.get("ok") is not True:
+            raise RuntimeError(f"{cmd!r}: {reply.get('error', 'invalid reply')}")
+        return reply
+
+    def dump(self, n: int) -> tuple[dict, np.ndarray]:
+        # up to "4095," per value, 2 values per point
+        reply = self.command("dump", reply_bytes=10 * n + 300)
+        data = np.column_stack([reply.pop("in"), reply.pop("out")]).astype(float)
+        if len(data) != reply["n"]:
+            raise RuntimeError(f"expected {reply['n']} points, got {len(data)}")
+        return reply, data
 
 
 def rc_lowpass(vin: np.ndarray, v0: float, dt: float, rc: float) -> np.ndarray:
@@ -111,23 +118,23 @@ def main() -> int:
     args = p.parse_args()
 
     # the acquisition itself lasts n / fs, plus the settling delay
-    scope = Scope(args.port, args.baud, timeout=args.n / args.fs + 3)
+    cli = Cli(args.port, args.baud, timeout=args.n / args.fs + 3)
     if args.shape == "step":
-        scope.command(f"gen step {args.vpp}")
+        cli.command(f"gen step {args.vpp}")
     else:
-        scope.command(f"gen {args.shape} {args.freq} {args.vpp}")
-    print(scope.command(f"acq {args.fs} {args.n}"))
-    header, data = scope.dump()
+        cli.command(f"gen {args.shape} {args.freq} {args.vpp}")
+    print(cli.command(f"acq {args.fs} {args.n}"))
+    header, data = cli.dump(args.n)
 
-    fs = float(header["fs"])
-    f = float(header["f"])
-    to_volt = float(header["vref"]) / float(header["full"]) / 1000.0
+    fs = header["fs"]
+    f = header["f"]
+    to_volt = header["vref"] / header["full"] / 1000.0
     vin, vout = data[:, 0] * to_volt, data[:, 1] * to_volt
     t = np.arange(len(vin)) / fs
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(t * 1e3, vin, label=f"input ({header['in']})")
-    ax.plot(t * 1e3, vout, label=f"output ({header['out']})")
+    ax.plot(t * 1e3, vin, label=f"input ({header['in_label']})")
+    ax.plot(t * 1e3, vout, label=f"output ({header['out_label']})")
     title = f"{header['shape']}, fs = {fs:g} Hz"
     if f > 0:
         title += f", f = {f:g} Hz"

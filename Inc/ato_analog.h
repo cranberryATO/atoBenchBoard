@@ -7,15 +7,17 @@
  * the input and the output of the circuit under test, both paced by the
  * same timer.
  *
- * Commands (every reply line starts with "ok" or "error:"):
+ * Commands (replies "ok ..." / "error: ..." in plain mode, one JSON object
+ * in json mode, see ato_cli_core.h):
  *   adc <n> <ch>               read ADCn channel ch (software-triggered ADC)
  *   dac <n> <ch> <mV>          set DACn channel ch
  *   gen sine <Hz> <mVpp>, gen square <Hz> <mVpp>, gen step <mVpp>
  *                              waveform for the next acquisition, centered
  *                              on VREF/2
  *   acq <fs> <n>               acquire n points at fs Hz
- *   dump                       "#scope ..." header, "in,out" lines (3 hex
- *                              digits each), "#end"
+ *   dump                       plain: "#scope ..." header, "in,out" lines
+ *                              (3 hex digits each), "#end"; json: the same
+ *                              header fields, "in" and "out" arrays
  *
  * Scope requirements (CubeMX):
  * - timer: TRGO = update event; its prescaler / period are set here.

@@ -8,8 +8,12 @@ static void pwminit_command(ato_cli_core_t *cli, void *user_data,
   (void)user_data;
   (void)args;
   (void)argc;
-  ato_cli_core_puts(cli, "PWM\r\n");
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1) != HAL_OK) {
+    ato_cli_reply_error(cli, "PWM start failed (already running?)");
+    return;
+  }
+  ato_cli_reply_begin(cli);
+  ato_cli_reply_end(cli);
 }
 
 ATO_CLI_TABLE(tim_commands, ATO_TIM_COMMANDS);

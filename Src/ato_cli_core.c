@@ -43,6 +43,8 @@
 
 static void help_command(ato_cli_core_t *cli, void *user_data,
                          const ato_cli_arg_t *args, uint8_t argc);
+static void mode_command(ato_cli_core_t *cli, void *user_data,
+                         const ato_cli_arg_t *args, uint8_t argc);
 
 static const ato_cli_param_t help_params[] = {
     {.name = "name",
@@ -55,6 +57,16 @@ static const ato_cli_param_t help_params[] = {
 static const ato_cli_command_t help_command_def = {
     "help", "List the commands, or describe the ones starting with <name>",
     help_command, help_params, COUNT_OF(help_params)};
+
+static const char *const mode_names[] = {"plain", "json"}; // ato_cli_mode_t
+static const ato_cli_param_t mode_params[] = {
+    ATO_CLI_ENUM("mode", "plain: for humans, json: for scripts", mode_names),
+};
+
+/* "mode" follows "help" in every command list. */
+static const ato_cli_command_t mode_command_def = {
+    "mode", "Select the output: plain (default) or json (for scripts)",
+    mode_command, mode_params, COUNT_OF(mode_params)};
 
 /* Command lookup ----------------------------------------------------------- */
 
@@ -167,29 +179,31 @@ static bool parse_int(const char *s, int32_t *value) {
   return true;
 }
 
-static void put_enum_values(ato_cli_core_t *cli, const ato_cli_param_t *p) {
-  for (uint8_t k = 0; k < p->e.count; k++) {
-    if (k > 0) {
-      ato_cli_core_puts(cli, "|");
-    }
-    ato_cli_core_puts(cli, p->e.values[k]);
+/* "a|b|c" into buf (SYNOPSIS_SIZE), truncated; returns buf. */
+static const char *enum_values(char *buf, const ato_cli_param_t *p) {
+  int n = 0;
+  buf[0] = '\0';
+  for (uint8_t k = 0; k < p->e.count && n < SYNOPSIS_SIZE; k++) {
+    n += snprintf(buf + n, SYNOPSIS_SIZE - n, k > 0 ? "|%s" : "%s",
+                  p->e.values[k]);
   }
+  return buf;
 }
 
 /* Convert `word` according to `p`; on error, prints it and returns false. */
 static bool convert(ato_cli_core_t *cli, const ato_cli_param_t *p,
                     const char *word, ato_cli_arg_t *arg) {
+  char buf[SYNOPSIS_SIZE];
   switch (p->type) {
   case ATO_CLI_PARAM_INT: {
     int32_t v;
     if (!parse_int(word, &v)) {
-      ato_cli_core_printf(cli, "error: <%s>: invalid number '%s'\r\n", p->name,
-                          word);
+      ato_cli_reply_error(cli, "<%s>: invalid number '%s'", p->name, word);
       return false;
     }
     if (v < p->i.min || v > p->i.max) {
-      ato_cli_core_printf(cli, "error: <%s>: out of range %ld..%ld\r\n",
-                          p->name, (long)p->i.min, (long)p->i.max);
+      ato_cli_reply_error(cli, "<%s>: out of range %ld..%ld", p->name,
+                          (long)p->i.min, (long)p->i.max);
       return false;
     }
     arg->i = v;
@@ -202,9 +216,7 @@ static bool convert(ato_cli_core_t *cli, const ato_cli_param_t *p,
         return true;
       }
     }
-    ato_cli_core_printf(cli, "error: <%s>: expected ", p->name);
-    put_enum_values(cli, p);
-    ato_cli_core_puts(cli, "\r\n");
+    ato_cli_reply_error(cli, "<%s>: expected %s", p->name, enum_values(buf, p));
     return false;
   case ATO_CLI_PARAM_STRING:
     arg->s = word;
@@ -225,7 +237,7 @@ static void run_command(ato_cli_core_t *cli, const ato_cli_list_item_t *item,
   if (count < required || count > def->nb_params) {
     char buf[SYNOPSIS_SIZE];
     synopsis(buf, def->command, def);
-    ato_cli_core_printf(cli, "error: usage: %s\r\n", buf);
+    ato_cli_reply_error(cli, "usage: %s", buf);
     return;
   }
 
@@ -236,6 +248,11 @@ static void run_command(ato_cli_core_t *cli, const ato_cli_list_item_t *item,
     }
   }
   def->handler(cli, item->user_data, args, count);
+
+  /* Safety net: a script must get one reply per line. */
+  if (cli->mode == ATO_CLI_MODE_JSON && !cli->replied) {
+    ato_cli_reply_error(cli, cli->depth > 0 ? "incomplete reply" : "no reply");
+  }
 }
 
 /*-----------------------------------------------------------*/
@@ -247,12 +264,19 @@ void ato_cli_core_init(ato_cli_core_t *cli, ato_cli_write_fn write,
 
   cli->commands.def = &help_command_def;
   cli->commands.user_data = NULL;
-  cli->commands.next = NULL;
-  cli->last = &cli->commands;
+  cli->commands.next = &cli->mode_item;
+  cli->mode_item.def = &mode_command_def;
+  cli->mode_item.user_data = NULL;
+  cli->mode_item.next = NULL;
+  cli->last = &cli->mode_item;
   cli->write = write;
   cli->write_arg = write_arg;
   cli->menu = NULL;
   cli->menu_len = 0;
+  cli->mode = ATO_CLI_MODE_PLAIN;
+  cli->replied = false;
+  cli->line_open = false;
+  cli->depth = 0;
 }
 /*-----------------------------------------------------------*/
 
@@ -285,8 +309,24 @@ void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
 }
 /*-----------------------------------------------------------*/
 
+static void json_key(ato_cli_core_t *cli, const char *key);
+static void json_str(ato_cli_core_t *cli, const char *str, size_t len);
+
+/* json mode: reply to a menu change, {"menu":"gen","ok":true}. */
+static void menu_reply(ato_cli_core_t *cli) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    ato_cli_reply_begin(cli);
+    json_key(cli, "menu");
+    json_str(cli, cli->menu, cli->menu_len);
+    ato_cli_reply_end(cli);
+  }
+}
+
 void ato_cli_core_process(ato_cli_core_t *cli, char *line) {
   configASSERT(cli != NULL);
+  cli->replied = false;
+  cli->line_open = false;
+  cli->depth = 0;
 
   /* Split the line into words, in place. */
   const char *words[ATO_CLI_MAX_WORDS];
@@ -297,7 +337,7 @@ void ato_cli_core_process(ato_cli_core_t *cli, char *line) {
       continue;
     }
     if (count == ATO_CLI_MAX_WORDS) {
-      ato_cli_core_puts(cli, "error: too many words\r\n");
+      ato_cli_reply_error(cli, "too many words");
       return;
     }
     words[count++] = p;
@@ -309,9 +349,10 @@ void ato_cli_core_process(ato_cli_core_t *cli, char *line) {
     return;
   }
 
-  /* Menu navigation. */
+  /* Menu navigation; silent in plain mode (the prompt shows the menu). */
   if (count == 1 && strcmp(words[0], "/") == 0) {
     cli->menu_len = 0;
+    menu_reply(cli);
     return;
   }
   if (count == 1 && strcmp(words[0], "..") == 0) {
@@ -320,6 +361,7 @@ void ato_cli_core_process(ato_cli_core_t *cli, char *line) {
       n--;
     }
     cli->menu_len = n > 0 ? n - 1 : 0;
+    menu_reply(cli);
     return;
   }
 
@@ -339,16 +381,19 @@ void ato_cli_core_process(ato_cli_core_t *cli, char *line) {
   case MATCH_PREFIX: // enter the menu; its name is a part of the command name
     cli->menu = r.item->def->command;
     cli->menu_len = r.covered;
+    menu_reply(cli);
     break;
   case MATCH_NONE:
-    ato_cli_core_printf(cli, "error: unknown command '%s', enter 'help'\r\n",
-                        words[0]);
+    ato_cli_reply_error(cli, "unknown command '%s', enter 'help'", words[0]);
     break;
   }
 }
 /*-----------------------------------------------------------*/
 
 void ato_cli_core_prompt(ato_cli_core_t *cli) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    return;
+  }
   if (cli->menu_len > 0) {
     ato_cli_core_printf(cli, "%.*s> ", (int)cli->menu_len, cli->menu);
   } else {
@@ -386,6 +431,229 @@ void ato_cli_core_printf(ato_cli_core_t *cli, const char *fmt, ...) {
 }
 /*-----------------------------------------------------------*/
 
+ato_cli_mode_t ato_cli_core_mode(const ato_cli_core_t *cli) {
+  return cli->mode;
+}
+/*-----------------------------------------------------------*/
+
+/* Replies ------------------------------------------------------------------ */
+
+#define BIT(d) (1UL << (d))
+
+/* json: separator before a new element of the current level, then its key. */
+static void json_key(ato_cli_core_t *cli, const char *key) {
+  if (cli->depth > 0) {
+    if (cli->first & BIT(cli->depth)) {
+      cli->first &= ~BIT(cli->depth);
+    } else {
+      ato_cli_core_write(cli, ",", 1);
+    }
+  }
+  if (key != NULL) {
+    json_str(cli, key, strlen(key));
+    ato_cli_core_write(cli, ":", 1);
+  }
+}
+
+/* json: quoted string, with the escapes needed. */
+static void json_str(ato_cli_core_t *cli, const char *str, size_t len) {
+  ato_cli_core_write(cli, "\"", 1);
+  size_t start = 0; // first char not written yet
+  for (size_t i = 0; i < len; i++) {
+    unsigned char c = (unsigned char)str[i];
+    if (c == '"' || c == '\\' || c < 0x20) {
+      ato_cli_core_write(cli, str + start, i - start);
+      char esc[8];
+      int n = c < 0x20 ? snprintf(esc, sizeof(esc), "\\u%04x", c)
+                       : snprintf(esc, sizeof(esc), "\\%c", c);
+      ato_cli_core_write(cli, esc, (size_t)n);
+      start = i + 1;
+    }
+  }
+  ato_cli_core_write(cli, str + start, len - start);
+  ato_cli_core_write(cli, "\"", 1);
+}
+
+static void json_open(ato_cli_core_t *cli, const char *key, bool array) {
+  json_key(cli, key);
+  ato_cli_core_write(cli, array ? "[" : "{", 1);
+  cli->depth++;
+  configASSERT(cli->depth < 32);
+  cli->first |= BIT(cli->depth);
+  if (array) {
+    cli->is_arr |= BIT(cli->depth);
+  } else {
+    cli->is_arr &= ~BIT(cli->depth);
+  }
+}
+
+static void json_close(ato_cli_core_t *cli) {
+  configASSERT(cli->depth > 0);
+  ato_cli_core_write(cli, (cli->is_arr & BIT(cli->depth)) ? "]" : "}", 1);
+  cli->depth--;
+}
+
+/* json: close the open levels but the reply object, then "ok". */
+static void json_finish(ato_cli_core_t *cli, bool ok) {
+  while (cli->depth > 1) {
+    json_close(cli);
+  }
+  json_key(cli, "ok");
+  ato_cli_core_puts(cli, ok ? "true}\r\n" : "false}\r\n");
+  cli->depth = 0;
+  cli->replied = true;
+}
+
+/* plain: " key=" before a value; " " alone without key. */
+static void plain_key(ato_cli_core_t *cli, const char *key) {
+  ato_cli_core_write(cli, " ", 1);
+  if (key != NULL) {
+    ato_cli_core_puts(cli, key);
+    ato_cli_core_write(cli, "=", 1);
+  }
+}
+
+void ato_cli_reply_begin(ato_cli_core_t *cli) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    cli->depth = 0;
+    json_open(cli, NULL, false);
+  } else {
+    ato_cli_core_puts(cli, "ok");
+    cli->line_open = true;
+  }
+}
+
+void ato_cli_reply_int(ato_cli_core_t *cli, const char *key, int32_t value) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    json_key(cli, key);
+  } else {
+    plain_key(cli, key);
+  }
+  ato_cli_core_printf(cli, "%ld", (long)value);
+}
+
+void ato_cli_reply_uint(ato_cli_core_t *cli, const char *key, uint32_t value) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    json_key(cli, key);
+  } else {
+    plain_key(cli, key);
+  }
+  ato_cli_core_printf(cli, "%lu", (unsigned long)value);
+}
+
+void ato_cli_reply_milli(ato_cli_core_t *cli, const char *key, uint64_t milli) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    json_key(cli, key);
+  } else {
+    plain_key(cli, key);
+  }
+  // no 64-bit printf with newlib nano
+  ato_cli_core_printf(cli, "%lu.%03lu", (unsigned long)(milli / 1000),
+                      (unsigned long)(milli % 1000));
+}
+
+void ato_cli_reply_str(ato_cli_core_t *cli, const char *key, const char *str) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    json_key(cli, key);
+    json_str(cli, str, strlen(str));
+  } else {
+    plain_key(cli, key);
+    ato_cli_core_puts(cli, str);
+  }
+}
+
+void ato_cli_reply_bool(ato_cli_core_t *cli, const char *key, bool value) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    json_key(cli, key);
+  } else {
+    plain_key(cli, key);
+  }
+  ato_cli_core_puts(cli, value ? "true" : "false");
+}
+
+void ato_cli_reply_end(ato_cli_core_t *cli) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    configASSERT(cli->depth > 0); // ato_cli_reply_begin() missing
+    json_finish(cli, true);
+  } else {
+    ato_cli_core_puts(cli, "\r\n");
+    cli->line_open = false;
+    cli->replied = true;
+  }
+}
+
+void ato_cli_reply_error(ato_cli_core_t *cli, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  int n = vsnprintf(cli->printf_buf, sizeof(cli->printf_buf), fmt, args);
+  va_end(args);
+  size_t len = n < 0 ? 0
+               : (size_t)n < sizeof(cli->printf_buf)
+                   ? (size_t)n
+                   : sizeof(cli->printf_buf) - 1;
+
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    if (cli->depth == 0) {
+      json_open(cli, NULL, false);
+    }
+    // the levels above the reply object are closed first, then the message
+    // (json_str() does not use printf_buf)
+    while (cli->depth > 1) {
+      json_close(cli);
+    }
+    json_key(cli, "error");
+    json_str(cli, cli->printf_buf, len);
+    json_finish(cli, false);
+  } else {
+    if (cli->line_open) {
+      ato_cli_core_puts(cli, "\r\n");
+    }
+    ato_cli_core_puts(cli, "error: ");
+    ato_cli_core_write(cli, cli->printf_buf, len);
+    ato_cli_core_puts(cli, "\r\n");
+    cli->line_open = false;
+    cli->replied = true;
+  }
+}
+
+void ato_cli_json_obj_begin(ato_cli_core_t *cli, const char *key) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    json_open(cli, key, false);
+  }
+}
+
+void ato_cli_json_obj_end(ato_cli_core_t *cli) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    json_close(cli);
+  }
+}
+
+void ato_cli_json_arr_begin(ato_cli_core_t *cli, const char *key) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    json_open(cli, key, true);
+  }
+}
+
+void ato_cli_json_arr_end(ato_cli_core_t *cli) {
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    json_close(cli);
+  }
+}
+/*-----------------------------------------------------------*/
+
+/* Mode --------------------------------------------------------------------- */
+
+static void mode_command(ato_cli_core_t *cli, void *user_data,
+                         const ato_cli_arg_t *args, uint8_t argc) {
+  (void)user_data;
+  (void)argc;
+  cli->mode = (ato_cli_mode_t)args[0].e;
+  ato_cli_reply_begin(cli); // in the new mode
+  ato_cli_reply_str(cli, "mode", mode_names[cli->mode]);
+  ato_cli_reply_end(cli);
+}
+/*-----------------------------------------------------------*/
+
 /* Help --------------------------------------------------------------------- */
 
 static void help_params_detail(ato_cli_core_t *cli,
@@ -397,10 +665,11 @@ static void help_params_detail(ato_cli_core_t *cli,
     case ATO_CLI_PARAM_INT:
       ato_cli_core_printf(cli, "%ld..%ld  ", (long)p->i.min, (long)p->i.max);
       break;
-    case ATO_CLI_PARAM_ENUM:
-      put_enum_values(cli, p);
-      ato_cli_core_puts(cli, "  ");
+    case ATO_CLI_PARAM_ENUM: {
+      char buf[SYNOPSIS_SIZE];
+      ato_cli_core_printf(cli, "%s  ", enum_values(buf, p));
       break;
+    }
     case ATO_CLI_PARAM_STRING:
       break;
     }
@@ -442,7 +711,31 @@ static void help_command(ato_cli_core_t *cli, void *user_data,
     }
   }
   if (width == 0) {
-    ato_cli_core_printf(cli, "error: no command '%s'\r\n", args[0].s);
+    ato_cli_reply_error(cli, "no command '%s'", args[0].s);
+    return;
+  }
+
+  /* json: {"commands":[{"command":..,"usage":..,"help":..},...],"ok":true},
+   * full command names, without the description of the parameters. */
+  if (cli->mode == ATO_CLI_MODE_JSON) {
+    ato_cli_reply_begin(cli);
+    ato_cli_json_arr_begin(cli, "commands");
+    for (const ato_cli_list_item_t *item = &cli->commands; item != NULL;
+         item = item->next) {
+      const ato_cli_command_t *def = item->def;
+      if (match(def->command, prefix, prefix_len, words, argc, &used,
+                &covered) != MATCH_NONE) {
+        char buf[SYNOPSIS_SIZE];
+        synopsis(buf, def->command, def);
+        ato_cli_json_obj_begin(cli, NULL);
+        ato_cli_reply_str(cli, "command", def->command);
+        ato_cli_reply_str(cli, "usage", buf);
+        ato_cli_reply_str(cli, "help", def->help);
+        ato_cli_json_obj_end(cli);
+      }
+    }
+    ato_cli_json_arr_end(cli);
+    ato_cli_reply_end(cli);
     return;
   }
 

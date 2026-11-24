@@ -45,7 +45,20 @@
  * root commands and the full command names work from any menu.
  *   ".."  goes up one level, "/" goes back to the root.
  *
- * Every error message starts with "error:".
+ * Output modes
+ * ------------
+ * "mode plain|json" selects the output of this interpreter:
+ * - plain (default): echo and prompt; replies "ok key=value ..." or
+ *   "error: message", tables as aligned text.
+ * - json, for scripts: no echo, no prompt; each command line gets exactly
+ *   one JSON object, on one line. Its last member is "ok": when it is not
+ *   true, the rest of the object is invalid, and "error" holds the message:
+ *     {"raw":1234,"mv":995,"ok":true}
+ *     {"error":"<fs>: out of range 10..200000","ok":false}
+ *
+ * Handlers write flat replies with the ato_cli_reply_xxx() functions, which
+ * produce both formats; for nested data (tables), they test
+ * ato_cli_core_mode() and use the ato_cli_json_xxx() functions in json mode.
  */
 
 #ifndef ATO_CLI_CORE_H
@@ -66,6 +79,11 @@
 #endif
 
 typedef struct ato_cli_core ato_cli_core_t;
+
+typedef enum {
+  ATO_CLI_MODE_PLAIN, // for humans
+  ATO_CLI_MODE_JSON,  // for scripts
+} ato_cli_mode_t;
 
 /**
  * Output sink, provided by the transport. Must write all `len` bytes,
@@ -170,12 +188,20 @@ typedef struct ato_cli_list_item {
 
 /** Interpreter context. Public so it can be embedded in an owner struct. */
 struct ato_cli_core {
-  ato_cli_list_item_t commands;         // list head, always the "help" command
-  ato_cli_list_item_t *last;            // list tail, for appending
-  ato_cli_write_fn write;               // output sink
-  void *write_arg;                      // its argument (e.g. the UART instance)
-  const char *menu;                     // current menu: the first `menu_len`
-  size_t menu_len;                      // chars of a command name; 0: root
+  ato_cli_list_item_t commands;  // list head, always the "help" command
+  ato_cli_list_item_t *last;     // list tail, for appending
+  ato_cli_write_fn write;        // output sink
+  void *write_arg;               // its argument (e.g. the UART instance)
+  ato_cli_list_item_t mode_item; // the "mode" command
+  const char *menu;              // current menu: the first `menu_len`
+  size_t menu_len;               // chars of a command name; 0: root
+  ato_cli_mode_t mode;           // output mode
+  // reply in progress
+  bool replied;    // the reply of the current line is complete
+  bool line_open;  // plain: a reply line is started
+  uint8_t depth;   // json: number of open objects / arrays (0: none)
+  uint32_t first;  // json: bit d set: next element of level d is the first
+  uint32_t is_arr; // json: bit d set: level d is an array
   char printf_buf[ATO_CLI_PRINTF_SIZE]; // formatting buffer of _printf()
 };
 
@@ -206,7 +232,7 @@ void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
  */
 void ato_cli_core_process(ato_cli_core_t *cli, char *line);
 
-/** Write the prompt: "> ", or "<menu>> " in a menu. */
+/** Write the prompt: "> ", or "<menu>> " in a menu; nothing in json mode. */
 void ato_cli_core_prompt(ato_cli_core_t *cli);
 
 /** Output of a command: `len` bytes. */
@@ -222,5 +248,38 @@ void ato_cli_core_puts(ato_cli_core_t *cli, const char *str);
  */
 void ato_cli_core_printf(ato_cli_core_t *cli, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
+
+/** Current output mode. */
+ato_cli_mode_t ato_cli_core_mode(const ato_cli_core_t *cli);
+
+/* Replies ------------------------------------------------------------------ */
+/*
+ * A reply is ato_cli_reply_begin(), values, then ato_cli_reply_end(); or
+ * ato_cli_reply_error(), at any time (also after a begin, values written so
+ * far are then invalid). One reply per command. `key` NULL: value only (an
+ * element of a json array).
+ *   plain: "ok key=1 key=2\r\n"       or "error: message\r\n"
+ *   json:  {"key":1,"key":2,"ok":true} or {...,"error":"message","ok":false}
+ */
+void ato_cli_reply_begin(ato_cli_core_t *cli);
+void ato_cli_reply_int(ato_cli_core_t *cli, const char *key, int32_t value);
+void ato_cli_reply_uint(ato_cli_core_t *cli, const char *key, uint32_t value);
+/** Value given in thousandths, shown with 3 decimals: 20000.000 */
+void ato_cli_reply_milli(ato_cli_core_t *cli, const char *key, uint64_t milli);
+void ato_cli_reply_str(ato_cli_core_t *cli, const char *key, const char *str);
+void ato_cli_reply_bool(ato_cli_core_t *cli, const char *key, bool value);
+void ato_cli_reply_end(ato_cli_core_t *cli);
+/** Message without "error:" and without "\r\n". */
+void ato_cli_reply_error(ato_cli_core_t *cli, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+
+/*
+ * Nested json values, between ato_cli_reply_begin() and _end(); ignored in
+ * plain mode. `key` NULL inside an array.
+ */
+void ato_cli_json_obj_begin(ato_cli_core_t *cli, const char *key);
+void ato_cli_json_obj_end(ato_cli_core_t *cli);
+void ato_cli_json_arr_begin(ato_cli_core_t *cli, const char *key);
+void ato_cli_json_arr_end(ato_cli_core_t *cli);
 
 #endif /* ATO_CLI_CORE_H */

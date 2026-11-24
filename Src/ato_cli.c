@@ -58,7 +58,8 @@ static char task_state_char(eTaskState state) {
   }
 }
 
-// Same columns as vTaskList(), which needs an unbounded output buffer.
+// plain: same columns as vTaskList(), which needs an unbounded output buffer.
+// json: {"tasks":[{"name":..,"state":"B","prio":..,"stack":..,"num":..}]}
 static void ps_command(ato_cli_core_t *cli, void *user_data,
                        const ato_cli_arg_t *args, uint8_t argc) {
   (void)user_data;
@@ -72,15 +73,33 @@ static void ps_command(ato_cli_core_t *cli, void *user_data,
   }
   UBaseType_t count = uxTaskGetSystemState(tasks, size, NULL);
 
-  ato_cli_core_printf(cli, "%-*s state prio stack num\r\n",
-                      configMAX_TASK_NAME_LEN, "name");
-  for (UBaseType_t i = 0; i < count; i++) {
-    const TaskStatus_t *t = &tasks[i];
-    ato_cli_core_printf(
-        cli, "%-*s   %c   %4lu %5u %3lu\r\n", configMAX_TASK_NAME_LEN,
-        t->pcTaskName, task_state_char(t->eCurrentState),
-        (unsigned long)t->uxCurrentPriority, (unsigned)t->usStackHighWaterMark,
-        (unsigned long)t->xTaskNumber);
+  if (ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON) {
+    ato_cli_reply_begin(cli);
+    ato_cli_json_arr_begin(cli, "tasks");
+    for (UBaseType_t i = 0; i < count; i++) {
+      const TaskStatus_t *t = &tasks[i];
+      char state[2] = {task_state_char(t->eCurrentState), '\0'};
+      ato_cli_json_obj_begin(cli, NULL);
+      ato_cli_reply_str(cli, "name", t->pcTaskName);
+      ato_cli_reply_str(cli, "state", state);
+      ato_cli_reply_uint(cli, "prio", t->uxCurrentPriority);
+      ato_cli_reply_uint(cli, "stack", t->usStackHighWaterMark);
+      ato_cli_reply_uint(cli, "num", t->xTaskNumber);
+      ato_cli_json_obj_end(cli);
+    }
+    ato_cli_json_arr_end(cli);
+    ato_cli_reply_end(cli);
+  } else {
+    ato_cli_core_printf(cli, "%-*s state prio stack num\r\n",
+                        configMAX_TASK_NAME_LEN, "name");
+    for (UBaseType_t i = 0; i < count; i++) {
+      const TaskStatus_t *t = &tasks[i];
+      ato_cli_core_printf(
+          cli, "%-*s   %c   %4lu %5u %3lu\r\n", configMAX_TASK_NAME_LEN,
+          t->pcTaskName, task_state_char(t->eCurrentState),
+          (unsigned long)t->uxCurrentPriority,
+          (unsigned)t->usStackHighWaterMark, (unsigned long)t->xTaskNumber);
+    }
   }
   vPortFree(tasks);
 }
@@ -104,14 +123,12 @@ static void stats_command(ato_cli_core_t *cli, void *user_data,
   (void)argc;
   const ato_cli_ctx_t *ctx = user_data;
   const ato_uart_t *u = &ctx->uart;
-  ato_cli_core_printf(cli, "tx dropped bytes : %lu\r\n",
-                      (unsigned long)u->tx_dropped_bytes);
-  ato_cli_core_printf(cli, "uart rx errors   : %lu\r\n",
-                      (unsigned long)u->rx_errors);
-  ato_cli_core_printf(cli, "uart tx errors   : %lu\r\n",
-                      (unsigned long)u->tx_errors);
-  ato_cli_core_printf(cli, "rx restart fails : %lu\r\n",
-                      (unsigned long)u->rx_restart_failures);
+  ato_cli_reply_begin(cli);
+  ato_cli_reply_uint(cli, "tx_dropped_bytes", u->tx_dropped_bytes);
+  ato_cli_reply_uint(cli, "rx_errors", u->rx_errors);
+  ato_cli_reply_uint(cli, "tx_errors", u->tx_errors);
+  ato_cli_reply_uint(cli, "rx_restart_failures", u->rx_restart_failures);
+  ato_cli_reply_end(cli);
 }
 
 /* Output of the commands --------------------------------------------------- */
@@ -129,12 +146,15 @@ static void cli_run(ato_cli_ctx_t *ctx, char *command) {
 }
 
 // Line editor: echo, end of line (\r, \n or \r\n), backspace, overlong lines.
+// No echo in json mode (scripts).
 static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
                             uint32_t size) {
   ato_uart_t *u = &ctx->uart;
 
   for (uint32_t i = 0; i < size; i++) {
     uint8_t c = bytes[i];
+    // read for each byte: a command of the line may change the mode
+    bool echo = ato_cli_core_mode(&ctx->cli) == ATO_CLI_MODE_PLAIN;
 
     if (c == '\r' || c == '\n') {
       uint8_t is_lf_after_cr = (c == '\n') && ctx->last_char_cr;
@@ -142,7 +162,9 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
       if (is_lf_after_cr) {
         continue; // second half of \r\n, line already handled
       }
-      ato_uart_write_string(u, "\r\n");
+      if (echo) {
+        ato_uart_write_string(u, "\r\n");
+      }
       if (!ctx->discard && ctx->cmd_idx > 0) {
         ctx->cmd_buf[ctx->cmd_idx] = 0;
         cli_run(ctx, ctx->cmd_buf);
@@ -161,7 +183,9 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
     if (c == 0x7f || c == '\b') { // DEL (most terminals) or BS
       if (ctx->cmd_idx > 0) {
         ctx->cmd_idx--;
-        ato_uart_write_string(u, "\b \b"); // erase the character on screen
+        if (echo) {
+          ato_uart_write_string(u, "\b \b"); // erase the character on screen
+        }
       }
       continue;
     }
@@ -171,13 +195,18 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
     }
 
     if (ctx->cmd_idx >= sizeof(ctx->cmd_buf) - 1) {
-      ato_uart_write_string(u, "\r\nerror: command too long, line ignored\r\n");
+      if (echo) {
+        ato_uart_write_string(u, "\r\n"); // the error after the echoed text
+      }
+      ato_cli_reply_error(&ctx->cli, "command too long, line ignored");
       ctx->discard = 1;
       continue;
     }
 
     ctx->cmd_buf[ctx->cmd_idx++] = (char)c;
-    ato_uart_write(u, &c, 1); // echo
+    if (echo) {
+      ato_uart_write(u, &c, 1);
+    }
   }
   return size;
 }

@@ -127,12 +127,12 @@ ANALOG_HANDLER(adc_command) {
   (void)argc;
   uint32_t n = args[0].i, ch = args[1].i;
   if (ctx->cfg->adc[n - 1] == NULL) {
-    ato_cli_core_printf(cli, "error: no ADC%lu\r\n", (unsigned long)n);
+    ato_cli_reply_error(cli, "no ADC%lu", (unsigned long)n);
     return;
   }
   ato_adc_t *a = &ctx->adc[n - 1];
   if (!ato_adc_is_software_triggered(a)) {
-    ato_cli_core_printf(cli, "error: ADC%lu is timer triggered (scope)\r\n",
+    ato_cli_reply_error(cli, "ADC%lu is timer triggered (scope)",
                         (unsigned long)n);
     return;
   }
@@ -143,12 +143,13 @@ ANALOG_HANDLER(adc_command) {
   xSemaphoreGive(ctx->lock);
 
   if (!ok) {
-    ato_cli_core_printf(cli, "error: invalid channel %lu\r\n",
-                        (unsigned long)ch);
-  } else {
-    ato_cli_core_printf(cli, "ok raw=%u mv=%lu\r\n", raw,
-                        (unsigned long)raw_to_mv(raw));
+    ato_cli_reply_error(cli, "invalid channel %lu", (unsigned long)ch);
+    return;
   }
+  ato_cli_reply_begin(cli);
+  ato_cli_reply_uint(cli, "raw", raw);
+  ato_cli_reply_uint(cli, "mv", raw_to_mv(raw));
+  ato_cli_reply_end(cli);
 }
 
 ANALOG_HANDLER(dac_command) {
@@ -157,7 +158,7 @@ ANALOG_HANDLER(dac_command) {
   uint32_t n = args[0].i, mv = args[2].i;
   uint32_t channel = args[1].i == 1 ? DAC_CHANNEL_1 : DAC_CHANNEL_2;
   if (ctx->cfg->dac[n - 1] == NULL) {
-    ato_cli_core_printf(cli, "error: no DAC%lu\r\n", (unsigned long)n);
+    ato_cli_reply_error(cli, "no DAC%lu", (unsigned long)n);
     return;
   }
 
@@ -167,8 +168,10 @@ ANALOG_HANDLER(dac_command) {
   dac_set(ctx->cfg->dac[n - 1], channel, raw);
   xSemaphoreGive(ctx->lock);
 
-  ato_cli_core_printf(cli, "ok raw=%lu mv=%lu\r\n", (unsigned long)raw,
-                      (unsigned long)raw_to_mv(raw));
+  ato_cli_reply_begin(cli);
+  ato_cli_reply_uint(cli, "raw", raw);
+  ato_cli_reply_uint(cli, "mv", raw_to_mv(raw));
+  ato_cli_reply_end(cli);
 }
 
 /* Scope commands ----------------------------------------------------------- */
@@ -181,8 +184,11 @@ static void gen_set(ato_cli_core_t *cli, ato_analog_ctx_t *ctx, shape_t shape,
   ctx->vpp_mv = vpp;
   xSemaphoreGive(ctx->lock);
 
-  ato_cli_core_printf(cli, "ok shape=%s f=%lu vpp=%lu\r\n", shape_names[shape],
-                      (unsigned long)freq, (unsigned long)vpp);
+  ato_cli_reply_begin(cli);
+  ato_cli_reply_str(cli, "shape", shape_names[shape]);
+  ato_cli_reply_uint(cli, "f", freq);
+  ato_cli_reply_uint(cli, "vpp", vpp);
+  ato_cli_reply_end(cli);
 }
 
 ANALOG_HANDLER(gen_sine_command) {
@@ -245,7 +251,7 @@ ANALOG_HANDLER(acq_command) {
   uint32_t len = build_table(ctx, fs, n);
   if (len == 0) {
     xSemaphoreGive(ctx->lock);
-    ato_cli_core_printf(cli, "error: f must be between fs/%u and fs/%u\r\n",
+    ato_cli_reply_error(cli, "f must be between fs/%u and fs/%u",
                         SCOPE_MAX_POINTS, SCOPE_MIN_PERIOD);
     return;
   }
@@ -289,11 +295,11 @@ ANALOG_HANDLER(acq_command) {
   uint64_t fs_mhz = ctx->fs_mhz, f_mhz = ctx->f_mhz;
   xSemaphoreGive(ctx->lock);
 
-  ato_cli_core_printf(cli, "ok fs=%lu.%03lu f=%lu.%03lu n=%lu\r\n",
-                      (unsigned long)(fs_mhz / 1000),
-                      (unsigned long)(fs_mhz % 1000),
-                      (unsigned long)(f_mhz / 1000),
-                      (unsigned long)(f_mhz % 1000), (unsigned long)n);
+  ato_cli_reply_begin(cli);
+  ato_cli_reply_milli(cli, "fs", fs_mhz);
+  ato_cli_reply_milli(cli, "f", f_mhz);
+  ato_cli_reply_uint(cli, "n", n);
+  ato_cli_reply_end(cli);
 }
 
 ANALOG_HANDLER(dump_command) {
@@ -306,9 +312,34 @@ ANALOG_HANDLER(dump_command) {
   xSemaphoreTake(ctx->lock, portMAX_DELAY);
   if (ctx->n == 0) {
     xSemaphoreGive(ctx->lock);
-    ato_cli_core_printf(cli, "error: no data, run acq first\r\n");
+    ato_cli_reply_error(cli, "no data, run acq first");
     return;
   }
+
+  if (ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON) {
+    // {"fs":..,"n":..,...,"in":[...],"out":[...],"ok":true}
+    ato_cli_reply_begin(cli);
+    ato_cli_reply_milli(cli, "fs", ctx->fs_mhz);
+    ato_cli_reply_uint(cli, "n", ctx->n);
+    ato_cli_reply_milli(cli, "f", ctx->f_mhz);
+    ato_cli_reply_str(cli, "shape", shape_names[ctx->shape]);
+    ato_cli_reply_uint(cli, "vpp", ctx->vpp_mv);
+    ato_cli_reply_uint(cli, "vref", VREF_MV);
+    ato_cli_reply_uint(cli, "full", FULL_SCALE);
+    ato_cli_reply_str(cli, "in_label", cfg->scope_in_label);
+    ato_cli_reply_str(cli, "out_label", cfg->scope_out_label);
+    for (uint32_t k = 0; k < 2; k++) { // k = 0: in, 1: out (interleaved)
+      ato_cli_json_arr_begin(cli, k == 0 ? "in" : "out");
+      for (uint32_t i = 0; i < ctx->n; i++) {
+        ato_cli_reply_uint(cli, NULL, ctx->samples[2 * i + k]);
+      }
+      ato_cli_json_arr_end(cli);
+    }
+    ato_cli_reply_end(cli);
+    xSemaphoreGive(ctx->lock);
+    return;
+  }
+
   ato_cli_core_printf(
       cli,
       "#scope fs=%lu.%03lu n=%lu f=%lu.%03lu shape=%s vpp=%lu "
