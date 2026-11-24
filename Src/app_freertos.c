@@ -31,6 +31,8 @@
 #include "ato_error.h"
 #include "ato_gpio.h"
 #include "ato_tim.h"
+#include "ato_usb.h"
+#include "ato_usb_cdc.h"
 #include "dac.h"
 #include "tim.h"
 #include "usart.h"
@@ -62,6 +64,7 @@ osThreadId defaultTaskHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+static void usb_echo_task(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -149,6 +152,13 @@ void MX_FREERTOS_Init(void) {
   ato_gpio_init(&gpio_ctx, cli1);
   static ato_tim_ctx_t tim_ctx;
   ato_tim_init(&tim_ctx, cli1);
+
+  ato_usb_start();
+  // temporary: validation of the CDC, before the CLI is moved onto it
+  if (xTaskCreate(usb_echo_task, "USB echo", 256, ato_usb_cdc_get(0),
+                  tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+    fatalError("Task creation failed for task USB echo");
+  }
   /* USER CODE END RTOS_THREADS */
 
 }
@@ -172,6 +182,15 @@ void StartDefaultTask(void const * argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+// Temporary: sends back everything received on the CDC interface `argument`.
+static void usb_echo_task(void *argument) {
+  char buf[64];
+  for (;;) {
+    size_t n = ato_usb_cdc_read(argument, buf, sizeof(buf));
+    ato_usb_cdc_write(argument, buf, n);
+  }
+}
 
 /* USER CODE END Application */
 

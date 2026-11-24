@@ -54,12 +54,28 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Src/ato_gpio.c
     ${CMAKE_SOURCE_DIR}/Src/ato_gpio_af_g47x.c
     ${CMAKE_SOURCE_DIR}/Src/ato_tim.c
+    ${CMAKE_SOURCE_DIR}/Src/ato_usb.c
+    ${CMAKE_SOURCE_DIR}/Src/ato_usb_cdc.c
+    ${CMAKE_SOURCE_DIR}/Src/ato_usb_desc.c
+)
+
+# TinyUSB (USB device stack), copied by tools/tinyusb/update.sh;
+# configuration: Inc/tusb_config.h
+set(TINYUSB_DIR ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/tinyusb/src)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    ${TINYUSB_DIR}/tusb.c
+    ${TINYUSB_DIR}/common/tusb_fifo.c
+    ${TINYUSB_DIR}/device/usbd.c
+    ${TINYUSB_DIR}/class/cdc/cdc_device.c
+    ${TINYUSB_DIR}/portable/st/stm32_fsdev/dcd_stm32_fsdev.c
+    ${TINYUSB_DIR}/portable/st/stm32_fsdev/fsdev_common.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ${CMAKE_SOURCE_DIR}/Drivers/BSP
+    ${TINYUSB_DIR}
 )
 
 # Add project symbols (macros)

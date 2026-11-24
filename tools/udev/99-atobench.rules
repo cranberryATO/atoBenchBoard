@@ -1,0 +1,14 @@
+# atoBench USB device (VID 0xcafe, PID 0x4001, see Src/ato_usb_desc.c).
+#
+# Install:
+#   sudo cp tools/udev/99-atobench.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger
+# then unplug / replug the board.
+
+# ModemManager probes new serial ports with AT commands: they would go to the
+# CLI. Set on the USB device, so that it is known before the tty appears.
+ACTION=="add|change", SUBSYSTEM=="usb", ATTR{idVendor}=="cafe", ATTR{idProduct}=="4001", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# CDC interface 0 (CLI): stable name /dev/atobench, readable by the dialout
+# group (the ST-LINK virtual COM port already takes /dev/ttyACM0).
+SUBSYSTEM=="tty", ATTRS{idVendor}=="cafe", ATTRS{idProduct}=="4001", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="atobench", GROUP="dialout", MODE="0660", ENV{ID_MM_DEVICE_IGNORE}="1"
