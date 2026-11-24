@@ -24,7 +24,7 @@
 #include "dma.h"
 #include "usart.h"
 #include "tim.h"
-#include "usb_device.h"
+#include "usb.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -104,6 +104,7 @@ int main(void)
   MX_TIM7_Init();
   MX_TIM3_Init();
   MX_ADC3_Init();
+  MX_USB_PCD_Init();
   /* USER CODE BEGIN 2 */
 
   printf("main()\r\n");
