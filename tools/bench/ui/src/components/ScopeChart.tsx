@@ -21,7 +21,7 @@ export function ScopeChart({ data }: { data: Dump }) {
   const box = useRef<HTMLDivElement>(null)
   const plot = useRef<uPlot | null>(null)
 
-  // created once per label set, updated with setData
+  // created once per label set (and full scale), updated with setData
   useEffect(() => {
     const el = box.current
     if (el === null) {
@@ -35,7 +35,11 @@ export function ScopeChart({ data }: { data: Dump }) {
     const opts: uPlot.Options = {
       width: el.clientWidth,
       height: 320,
-      scales: { x: { time: false } },
+      scales: {
+        x: { time: false },
+        // the whole ADC range, whatever the values: no zoom on small signals
+        y: { range: [0, data.vref / 1000] },
+      },
       axes: [
         { ...axis, label: "time (ms)" },
         { ...axis, label: "voltage (V)" },
@@ -57,7 +61,7 @@ export function ScopeChart({ data }: { data: Dump }) {
       plot.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.in_label, data.out_label])
+  }, [data.in_label, data.out_label, data.vref])
 
   useEffect(() => {
     plot.current?.setData(toSeries(data))

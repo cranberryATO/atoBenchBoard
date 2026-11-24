@@ -1,3 +1,5 @@
+import { ChipIcon } from "@hugeicons/core-free-icons"
+import { HugeiconsIcon } from "@hugeicons/react"
 import { useQuery } from "@tanstack/react-query"
 import { HashRouter, Navigate, NavLink, Route, Routes } from "react-router"
 
@@ -44,7 +46,10 @@ export function App() {
     <HashRouter>
       <div className="flex min-h-svh flex-col">
         <header className="flex items-center gap-6 border-b px-6 py-3">
-          <h1 className="font-heading text-lg font-medium">atoBench</h1>
+          <h1 className="flex items-center gap-2 font-heading text-lg font-medium">
+            <HugeiconsIcon icon={ChipIcon} className="size-5 text-primary" />
+            atoBench
+          </h1>
           <nav className="flex gap-1">
             {PAGES.map((p) => (
               <NavLink

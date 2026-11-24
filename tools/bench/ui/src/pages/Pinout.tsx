@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
 
 import { gpioShow, pinsByName } from "@/cli"
 import { Lqfp, PAD_STATES, padState } from "@/components/Lqfp"
@@ -12,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import pinout from "@/data/pinout.json"
+import { useSessionState } from "@/lib/session-state"
 
 export function Pinout() {
   const gpio = useQuery({
@@ -19,7 +19,11 @@ export function Pinout() {
     queryFn: gpioShow,
     refetchInterval: 2000,
   })
-  const [selected, setSelected] = useState<number | null>(null)
+  // kept when leaving the page, and on a reload of the tab
+  const [selected, setSelected] = useSessionState<number | null>(
+    "pinout.selected",
+    null
+  )
 
   const pins = gpio.data ? pinsByName(gpio.data) : new Map()
   const pin = pinout.pins.find((p) => p.position === selected)
