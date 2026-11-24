@@ -1,0 +1,20 @@
+[project]
+name = "atobench-tests"
+version = "0.1.0"
+description = "Test harness of the atoBenchBoard firmware, through its CLI"
+requires-python = ">=3.11"
+dependencies = [
+    "atocli",
+    "pytest>=8",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+atocli = { path = "../atocli", editable = true }
+
+# options (--port, --loopback), markers and fixtures (cli): see the pytest
+# plugin of atocli, src/atocli/pytest_plugin.py
+[tool.pytest.ini_options]
+addopts = "-ra"

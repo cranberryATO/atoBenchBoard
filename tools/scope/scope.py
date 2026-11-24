@@ -16,72 +16,22 @@ Examples:
 
 import argparse
 import csv
-import json
 import math
 import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
-import serial
+from atocli import Cli
 
 
-class Cli:
-    """Command / reply exchange with the CLI, in json mode."""
-
-    def __init__(self, port: str, baudrate: int, timeout: float):
-        self.ser = serial.Serial(port, baudrate, timeout=timeout)
-        self.baudrate = baudrate
-        # flush a partially typed line and any pending output
-        self.ser.write(b"\r")
-        self.ser.reset_input_buffer()
-        # still in plain mode until this command: skip its echo
-        self.ser.write(b"mode json\r")
-        while True:
-            reply = self._parse(self._readline())
-            if reply is not None and reply.get("mode") == "json":
-                break
-
-    def _readline(self) -> str:
-        line = self.ser.readline()
-        if not line:
-            raise TimeoutError("no answer from the board")
-        return line.decode("ascii", errors="replace").strip()
-
-    @staticmethod
-    def _parse(line: str) -> dict | None:
-        try:
-            reply = json.loads(line)
-        except json.JSONDecodeError:
-            return None
-        return reply if isinstance(reply, dict) else None
-
-    def command(self, cmd: str, reply_bytes: int = 0) -> dict:
-        """Send `cmd`, return its reply; raise if it is not ok.
-
-        `reply_bytes`: expected size of the reply, to extend the timeout
-        for long transfers (the timeout covers the whole line)."""
-        self.ser.reset_input_buffer()
-        timeout = self.ser.timeout
-        self.ser.timeout = timeout + 1.5 * reply_bytes * 10 / self.baudrate
-        try:
-            self.ser.write((cmd + "\r").encode("ascii"))
-            line = self._readline()
-        finally:
-            self.ser.timeout = timeout
-        reply = self._parse(line)
-        if reply is None:
-            raise RuntimeError(f"{cmd!r}: not a JSON reply: {line[:80]!r}")
-        if reply.get("ok") is not True:
-            raise RuntimeError(f"{cmd!r}: {reply.get('error', 'invalid reply')}")
-        return reply
-
-    def dump(self, n: int) -> tuple[dict, np.ndarray]:
-        # up to "4095," per value, 2 values per point
-        reply = self.command("dump", reply_bytes=10 * n + 300)
-        data = np.column_stack([reply.pop("in"), reply.pop("out")]).astype(float)
-        if len(data) != reply["n"]:
-            raise RuntimeError(f"expected {reply['n']} points, got {len(data)}")
-        return reply, data
+def dump(cli: Cli, n: int) -> tuple[dict, np.ndarray]:
+    """Last acquisition: header fields, and the points as columns in, out."""
+    # up to "4095," per value, 2 values per point
+    reply = cli.command("dump", reply_bytes=10 * n + 300)
+    data = np.column_stack([reply.pop("in"), reply.pop("out")]).astype(float)
+    if len(data) != reply["n"]:
+        raise RuntimeError(f"expected {reply['n']} points, got {len(data)}")
+    return reply, data
 
 
 def rc_lowpass(vin: np.ndarray, v0: float, dt: float, rc: float) -> np.ndarray:
@@ -124,7 +74,7 @@ def main() -> int:
     else:
         cli.command(f"gen {args.shape} {args.freq} {args.vpp}")
     print(cli.command(f"acq {args.fs} {args.n}"))
-    header, data = cli.dump(args.n)
+    header, data = dump(cli, args.n)
 
     fs = header["fs"]
     f = header["f"]

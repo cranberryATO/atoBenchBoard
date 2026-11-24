@@ -1,0 +1,16 @@
+[project]
+name = "atocli"
+version = "0.1.0"
+description = "Access to the atoBenchBoard CLI from Python, in json mode"
+requires-python = ">=3.11"
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[build-system]
+requires = ["uv_build>=0.8"]
+build-backend = "uv_build"
+
+# pytest plugin of the test harness (tools/tests): options and fixtures
+[project.entry-points.pytest11]
+atocli = "atocli.pytest_plugin"
