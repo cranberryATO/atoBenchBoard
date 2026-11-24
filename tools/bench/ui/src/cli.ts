@@ -92,6 +92,10 @@ export const gpioSet = (pin: string, level: 0 | 1) =>
 
 // Analog ------------------------------------------------------------------
 
+/** Single conversion of a software-triggered ADC. */
+export const adcRead = (n: number, ch: number) =>
+  cli<{ raw: number; mv: number }>(`adc ${n} ${ch}`)
+
 export const dac = (n: number, ch: number, mv: number) =>
   cli<{ raw: number; mv: number }>(`dac ${n} ${ch} ${mv}`)
 

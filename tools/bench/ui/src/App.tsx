@@ -8,10 +8,12 @@ import { Toaster } from "@/components/ui/sonner"
 import { Console } from "@/pages/Console"
 import { IOs } from "@/pages/IOs"
 import { Pinout } from "@/pages/Pinout"
+import { Scope } from "@/pages/Scope"
 
 const PAGES = [
   { path: "/pinout", label: "Pinout" },
   { path: "/ios", label: "IOs" },
+  { path: "/scope", label: "Scope" },
   { path: "/console", label: "Console" },
 ]
 
@@ -68,6 +70,7 @@ export function App() {
             <Route path="/" element={<Navigate to="/pinout" replace />} />
             <Route path="/pinout" element={<Pinout />} />
             <Route path="/ios" element={<IOs />} />
+            <Route path="/scope" element={<Scope />} />
             <Route path="/console" element={<Console />} />
           </Routes>
         </main>
