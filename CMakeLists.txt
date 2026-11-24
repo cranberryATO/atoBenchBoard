@@ -52,6 +52,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Src/ato_adc.c
     ${CMAKE_SOURCE_DIR}/Src/ato_analog.c
     ${CMAKE_SOURCE_DIR}/Src/ato_gpio.c
+    ${CMAKE_SOURCE_DIR}/Src/ato_gpio_af_g47x.c
     ${CMAKE_SOURCE_DIR}/Src/ato_tim.c
 )
 
