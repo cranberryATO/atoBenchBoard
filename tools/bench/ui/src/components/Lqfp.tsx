@@ -29,8 +29,7 @@ export function padLabel(pin: PackagePin, gpio?: GpioPin): string {
   if (gpio === undefined) {
     return pin.name
   }
-  const func = gpio.mode === "AF" ? gpio.af : gpio.mode
-  return `${pin.name} · ${func}`
+  return gpio.mode === "AF" ? `${pin.name} · ${gpio.af}` : pin.name
 }
 
 const PER_SIDE = pinout.pins.length / 4
@@ -53,7 +52,12 @@ type Geometry = {
   ty: number
   rotate: boolean // vertical label (top and bottom sides)
   anchor: "start" | "end"
+  hit: { x: number; y: number; w: number; h: number } // click area
 }
+
+// Click area of a pin: its whole pitch, from the body to the end of the
+// label room; the areas of neighbor pins touch, with no dead zone.
+const HIT_END = 8 // margin to the edge of the drawing
 
 // Pin 1 at the top of the left side, numbered counterclockwise.
 function geometry(position: number): Geometry {
@@ -63,29 +67,57 @@ function geometry(position: number): Geometry {
     case 0: {
       const y = FIRST + i * PITCH
       return {
-        x: B0 - PAD_LEN, y: y - PAD_W / 2, w: PAD_LEN, h: PAD_W,
-        tx: B0 - PAD_LEN - 6, ty: y, rotate: false, anchor: "end",
+        x: B0 - PAD_LEN,
+        y: y - PAD_W / 2,
+        w: PAD_LEN,
+        h: PAD_W,
+        tx: B0 - PAD_LEN - 6,
+        ty: y,
+        rotate: false,
+        anchor: "end",
+        hit: { x: HIT_END, y: y - PITCH / 2, w: B0 - HIT_END, h: PITCH },
       }
     }
     case 1: {
       const x = FIRST + i * PITCH
       return {
-        x: x - PAD_W / 2, y: B1, w: PAD_W, h: PAD_LEN,
-        tx: x, ty: B1 + PAD_LEN + 6, rotate: true, anchor: "end",
+        x: x - PAD_W / 2,
+        y: B1,
+        w: PAD_W,
+        h: PAD_LEN,
+        tx: x,
+        ty: B1 + PAD_LEN + 6,
+        rotate: true,
+        anchor: "end",
+        hit: { x: x - PITCH / 2, y: B1, w: PITCH, h: SIZE - HIT_END - B1 },
       }
     }
     case 2: {
       const y = B1 - PITCH - i * PITCH
       return {
-        x: B1, y: y - PAD_W / 2, w: PAD_LEN, h: PAD_W,
-        tx: B1 + PAD_LEN + 6, ty: y, rotate: false, anchor: "start",
+        x: B1,
+        y: y - PAD_W / 2,
+        w: PAD_LEN,
+        h: PAD_W,
+        tx: B1 + PAD_LEN + 6,
+        ty: y,
+        rotate: false,
+        anchor: "start",
+        hit: { x: B1, y: y - PITCH / 2, w: SIZE - HIT_END - B1, h: PITCH },
       }
     }
     default: {
       const x = B1 - PITCH - i * PITCH
       return {
-        x: x - PAD_W / 2, y: B0 - PAD_LEN, w: PAD_W, h: PAD_LEN,
-        tx: x, ty: B0 - PAD_LEN - 6, rotate: true, anchor: "start",
+        x: x - PAD_W / 2,
+        y: B0 - PAD_LEN,
+        w: PAD_W,
+        h: PAD_LEN,
+        tx: x,
+        ty: B0 - PAD_LEN - 6,
+        rotate: true,
+        anchor: "start",
+        hit: { x: x - PITCH / 2, y: HIT_END, w: PITCH, h: B0 - HIT_END },
       }
     }
   }
@@ -115,19 +147,31 @@ export function Lqfp({ gpio, selected, onSelect }: Props) {
       aria-label={`${pinout.mcu} ${pinout.package} pinout`}
     >
       <rect
-        x={B0} y={B0} width={BODY} height={BODY} rx={6}
+        x={B0}
+        y={B0}
+        width={BODY}
+        height={BODY}
         className="fill-muted stroke-border"
         strokeWidth={2}
       />
-      <circle cx={B0 + 18} cy={B0 + 18} r={6} className="fill-muted-foreground" />
+      <circle
+        cx={B0 + 18}
+        cy={B0 + 18}
+        r={6}
+        className="fill-muted-foreground"
+      />
       <text
-        x={SIZE / 2} y={SIZE / 2 - 8} textAnchor="middle"
+        x={SIZE / 2}
+        y={SIZE / 2 - 8}
+        textAnchor="middle"
         className="fill-foreground text-[18px] font-medium"
       >
         {pinout.mcu}
       </text>
       <text
-        x={SIZE / 2} y={SIZE / 2 + 16} textAnchor="middle"
+        x={SIZE / 2}
+        y={SIZE / 2 + 16}
+        textAnchor="middle"
         className="fill-muted-foreground text-[14px]"
       >
         {pinout.package}
@@ -146,13 +190,24 @@ export function Lqfp({ gpio, selected, onSelect }: Props) {
           >
             <title>{`${pin.position}: ${padLabel(pin, live)}`}</title>
             <rect
-              x={g.x} y={g.y} width={g.w} height={g.h} rx={2}
+              x={g.hit.x}
+              y={g.hit.y}
+              width={g.hit.w}
+              height={g.hit.h}
+              fill="transparent"
+            />
+            <rect
+              x={g.x}
+              y={g.y}
+              width={g.w}
+              height={g.h}
               fill={FILL[state]}
               className={isSelected ? "stroke-foreground" : "stroke-border"}
               strokeWidth={isSelected ? 2.5 : 1}
             />
             <text
-              x={g.tx} y={g.ty}
+              x={g.tx}
+              y={g.ty}
               textAnchor={g.anchor}
               dominantBaseline="central"
               transform={g.rotate ? `rotate(-90 ${g.tx} ${g.ty})` : undefined}

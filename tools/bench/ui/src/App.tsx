@@ -3,6 +3,7 @@ import { HashRouter, Navigate, NavLink, Route, Routes } from "react-router"
 
 import { cli } from "@/cli"
 import { Badge } from "@/components/ui/badge"
+import { buttonVariants } from "@/components/ui/button"
 import { Toaster } from "@/components/ui/sonner"
 import { Console } from "@/pages/Console"
 import { IOs } from "@/pages/IOs"
@@ -48,10 +49,10 @@ export function App() {
                 key={p.path}
                 to={p.path}
                 className={({ isActive }) =>
-                  "rounded-md px-3 py-1.5 text-sm " +
-                  (isActive
-                    ? "bg-muted font-medium"
-                    : "text-muted-foreground hover:text-foreground")
+                  buttonVariants({
+                    variant: isActive ? "secondary" : "ghost",
+                    size: "sm",
+                  })
                 }
               >
                 {p.label}

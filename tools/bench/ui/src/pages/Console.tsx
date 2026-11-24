@@ -82,7 +82,7 @@ export function Console() {
             <div className="font-mono text-sm">&gt; {e.line}</div>
             <pre
               className={
-                "overflow-x-auto rounded-md bg-muted p-3 text-xs " +
+                "overflow-x-auto bg-muted p-3 text-xs " +
                 (e.reply?.ok === true ? "" : "text-destructive")
               }
             >

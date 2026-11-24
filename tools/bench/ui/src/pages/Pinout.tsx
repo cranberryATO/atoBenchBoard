@@ -28,13 +28,6 @@ export function Pinout() {
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
       <Card className="flex-1">
-        <CardHeader>
-          <CardTitle>Pinout</CardTitle>
-          <CardDescription>
-            Actual configuration of the pins (gpio show), refreshed every 2 s.
-            Click a pad for its details.
-          </CardDescription>
-        </CardHeader>
         <CardContent className="flex justify-center">
           <Lqfp gpio={pins} selected={selected} onSelect={setSelected} />
         </CardContent>
@@ -43,7 +36,9 @@ export function Pinout() {
       <div className="flex flex-col gap-4 lg:w-72">
         <Card>
           <CardHeader>
-            <CardTitle>{pin ? `Pin ${pin.position}` : "No pin selected"}</CardTitle>
+            <CardTitle>
+              {pin ? `Pin ${pin.position}` : "No pin selected"}
+            </CardTitle>
             <CardDescription>{pin?.name ?? "Click a pad"}</CardDescription>
           </CardHeader>
           {pin && (
@@ -81,7 +76,7 @@ export function Pinout() {
             {PAD_STATES.map(({ state, label }) => (
               <div key={state} className="flex items-center gap-2">
                 <span
-                  className="size-3 rounded-sm border"
+                  className="size-3 border"
                   style={{ background: `var(--pin-${state.toLowerCase()})` }}
                 />
                 {label}
