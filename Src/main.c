@@ -103,6 +103,7 @@ int main(void)
   MX_DAC1_Init();
   MX_TIM7_Init();
   MX_TIM3_Init();
+  MX_ADC3_Init();
   /* USER CODE BEGIN 2 */
 
   printf("main()\r\n");
@@ -114,9 +115,6 @@ int main(void)
 
   /* Call init function for freertos objects (in cmsis_os2.c) */
   MX_FREERTOS_Init();
-
-  /* Initialize led */
-  BSP_LED_Init(LED_GREEN);
 
   /* Initialize User push-button without interrupt mode. */
   BSP_PB_Init(BUTTON_USER, BUTTON_MODE_GPIO);
