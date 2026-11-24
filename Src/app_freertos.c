@@ -19,13 +19,14 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "task.h"
-#include "main.h"
 #include "cmsis_os.h"
+#include "main.h"
+#include "task.h"
+
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "adc.h"
+// #include "adc.h"
 #include "ato_analog.h"
 #include "ato_cli.h"
 #include "ato_error.h"
@@ -56,6 +57,8 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
+__weak extern ADC_HandleTypeDef hadc1, hadc2, hadc3, hadc4, hadc5;
+
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
 
@@ -64,7 +67,7 @@ osThreadId defaultTaskHandle;
 
 /* USER CODE END FunctionPrototypes */
 
-void StartDefaultTask(void const * argument);
+void StartDefaultTask(void const *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -99,10 +102,10 @@ __weak void vApplicationMallocFailedHook(void) {
 /* USER CODE END 5 */
 
 /**
-  * @brief  FreeRTOS initialization
-  * @param  None
-  * @retval None
-  */
+ * @brief  FreeRTOS initialization
+ * @param  None
+ * @retval None
+ */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
 
@@ -133,7 +136,7 @@ void MX_FREERTOS_Init(void) {
   /* add threads, ... */
   ato_cli_ctx_t *cli1 = ato_cli_create_task(&huart1, "CLI1");
   static const ato_analog_config_t analog_cfg = {
-      .adc = {&hadc1},
+      .adc = {&hadc1, &hadc2, &hadc3, &hadc4, &hadc5},
       .dac = {&hdac1},
       .scope_adc = &hadc1, // rank 1 = IN1 (PA0), rank 2 = IN5 (PB14)
       .scope_dac = &hdac1, // OUT1 (PA4)
@@ -149,7 +152,6 @@ void MX_FREERTOS_Init(void) {
   static ato_tim_ctx_t tim_ctx;
   ato_tim_init(&tim_ctx, cli1);
   /* USER CODE END RTOS_THREADS */
-
 }
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -159,8 +161,7 @@ void MX_FREERTOS_Init(void) {
  * @retval None
  */
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
-{
+void StartDefaultTask(void const *argument) {
   /* init code for USB_Device */
   MX_USB_Device_Init();
   /* USER CODE BEGIN StartDefaultTask */
@@ -175,4 +176,3 @@ void StartDefaultTask(void const * argument)
 /* USER CODE BEGIN Application */
 
 /* USER CODE END Application */
-

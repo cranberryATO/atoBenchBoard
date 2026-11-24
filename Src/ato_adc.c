@@ -1,6 +1,8 @@
 #include "ato_adc.h"
 
 #include "ato_error.h"
+#include "ato_utils.h"
+#include "stm32g4xx_ll_adc.h"
 #include "task.h"
 #include <string.h>
 
@@ -13,11 +15,16 @@
 static ato_adc_t *s_by_periph[ATO_ADC_NB_PERIPH];
 
 static int32_t periph_index(const ADC_TypeDef *inst) {
-  if (inst == ADC1) return 0;
-  if (inst == ADC2) return 1;
-  if (inst == ADC3) return 2;
-  if (inst == ADC4) return 3;
-  if (inst == ADC5) return 4;
+  if (inst == ADC1)
+    return 0;
+  if (inst == ADC2)
+    return 1;
+  if (inst == ADC3)
+    return 2;
+  if (inst == ADC4)
+    return 3;
+  if (inst == ADC5)
+    return 4;
   return -1;
 }
 
@@ -32,6 +39,27 @@ static ato_adc_t *find_instance(const ADC_HandleTypeDef *hadc) {
 
 /* Setup -------------------------------------------------------------------- */
 
+// Channels of the regular sequence programmed by MX_ADCx_Init(). Read before
+// any ato_adc_read(), which reprograms rank 1.
+static uint32_t sequence_channels(ADC_TypeDef *inst) {
+  static const uint32_t ranks[] = {
+      LL_ADC_REG_RANK_1,  LL_ADC_REG_RANK_2,  LL_ADC_REG_RANK_3,
+      LL_ADC_REG_RANK_4,  LL_ADC_REG_RANK_5,  LL_ADC_REG_RANK_6,
+      LL_ADC_REG_RANK_7,  LL_ADC_REG_RANK_8,  LL_ADC_REG_RANK_9,
+      LL_ADC_REG_RANK_10, LL_ADC_REG_RANK_11, LL_ADC_REG_RANK_12,
+      LL_ADC_REG_RANK_13, LL_ADC_REG_RANK_14, LL_ADC_REG_RANK_15,
+      LL_ADC_REG_RANK_16,
+  };
+  uint32_t length = (READ_BIT(inst->SQR1, ADC_SQR1_L) >> ADC_SQR1_L_Pos) + 1;
+  uint32_t channels = 0;
+  for (uint32_t r = 0; r < length && r < COUNT_OF(ranks); r++) {
+    uint32_t ch = __LL_ADC_CHANNEL_TO_DECIMAL_NB(
+        LL_ADC_REG_GetSequencerRanks(inst, ranks[r]));
+    channels |= 1UL << ch;
+  }
+  return channels;
+}
+
 void ato_adc_init(ato_adc_t *a, ADC_HandleTypeDef *hadc) {
   configASSERT(a != NULL);
   configASSERT(hadc != NULL);
@@ -41,6 +69,7 @@ void ato_adc_init(ato_adc_t *a, ADC_HandleTypeDef *hadc) {
 
   memset(a, 0, sizeof(*a));
   a->hadc = hadc;
+  a->channels = sequence_channels(hadc->Instance);
   a->done = xSemaphoreCreateBinary();
   if (a->done == NULL) {
     fatalError("ADC: semaphore allocation failed");
@@ -51,6 +80,8 @@ void ato_adc_init(ato_adc_t *a, ADC_HandleTypeDef *hadc) {
   s_by_periph[i] = a;
   taskEXIT_CRITICAL();
 }
+
+uint32_t ato_adc_channels(const ato_adc_t *a) { return a->channels; }
 
 bool ato_adc_is_software_triggered(const ato_adc_t *a) {
   return a->hadc->Init.ExternalTrigConv == ADC_SOFTWARE_START;
@@ -90,11 +121,11 @@ bool ato_adc_read(ato_adc_t *a, uint32_t channel, uint16_t *value) {
     return false;
   }
 
-  xSemaphoreTake(a->done, 0); // drop a stale signal, if any
-  if (HAL_ADC_Start_IT(a->hadc) != HAL_OK) {
+  if (HAL_ADC_Start(a->hadc) != HAL_OK) {
     fatalError("ADC start failed");
   }
-  if (xSemaphoreTake(a->done, pdMS_TO_TICKS(ATO_ADC_TIMEOUT_MS)) != pdTRUE) {
+
+  if (HAL_ADC_PollForConversion(a->hadc, ATO_ADC_TIMEOUT_MS) != HAL_OK) {
     fatalError("ADC conversion timeout");
   }
   *value = (uint16_t)HAL_ADC_GetValue(a->hadc);

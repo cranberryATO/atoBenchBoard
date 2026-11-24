@@ -33,6 +33,7 @@ typedef struct {
   SemaphoreHandle_t done; // given by the ISR at end of conversion / DMA
   bool calibrated;
   volatile uint32_t errors; // written in ISR
+  uint32_t channels;        // regular sequence set by CubeMX, bit n: channel n
 } ato_adc_t;
 
 /**
@@ -44,6 +45,12 @@ void ato_adc_init(ato_adc_t *a, ADC_HandleTypeDef *hadc);
 
 /** True if the ADC is started by software (usable by ato_adc_read()). */
 bool ato_adc_is_software_triggered(const ato_adc_t *a);
+
+/**
+ * Channels of the regular sequence configured by CubeMX (MX_ADCx_Init),
+ * read at ato_adc_init(): bit n set for channel n.
+ */
+uint32_t ato_adc_channels(const ato_adc_t *a);
 
 /**
  * @brief  Convert one channel (single-ended), blocking the calling task.

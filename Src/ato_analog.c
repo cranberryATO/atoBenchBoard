@@ -30,7 +30,9 @@ static const char *const shape_names[] = {"sine", "square", "step"};
   static void fn(ato_cli_core_t *cli, void *user_data,                         \
                  const ato_cli_arg_t *args, uint8_t argc)
 ANALOG_HANDLER(adc_command);
+ANALOG_HANDLER(adc_list_command);
 ANALOG_HANDLER(dac_command);
+ANALOG_HANDLER(dac_list_command);
 ANALOG_HANDLER(gen_sine_command);
 ANALOG_HANDLER(gen_square_command);
 ANALOG_HANDLER(gen_step_command);
@@ -138,9 +140,7 @@ ANALOG_HANDLER(adc_command) {
   }
 
   uint16_t raw;
-  xSemaphoreTake(ctx->lock, portMAX_DELAY);
   bool ok = ato_adc_read(a, ch, &raw);
-  xSemaphoreGive(ctx->lock);
 
   if (!ok) {
     ato_cli_reply_error(cli, "invalid channel %lu", (unsigned long)ch);
@@ -150,6 +150,102 @@ ANALOG_HANDLER(adc_command) {
   ato_cli_reply_uint(cli, "raw", raw);
   ato_cli_reply_uint(cli, "mv", raw_to_mv(raw));
   ato_cli_reply_end(cli);
+}
+
+// plain: one line per ADC, "ADC3 software IN1"
+// json: {"adcs":[{"adc":3,"trigger":"software","channels":[1]},...]}
+ANALOG_HANDLER(adc_list_command) {
+  ato_analog_ctx_t *ctx = user_data;
+  (void)args;
+  (void)argc;
+  bool json = ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON;
+  if (json) {
+    ato_cli_reply_begin(cli);
+    ato_cli_json_arr_begin(cli, "adcs");
+  }
+  for (uint32_t i = 0; i < ATO_ANALOG_NB_ADC; i++) {
+    if (ctx->cfg->adc[i] == NULL) {
+      continue;
+    }
+    const ato_adc_t *a = &ctx->adc[i];
+    const char *trigger =
+        ato_adc_is_software_triggered(a) ? "software" : "timer";
+    uint32_t channels = ato_adc_channels(a);
+    if (json) {
+      ato_cli_json_obj_begin(cli, NULL);
+      ato_cli_reply_uint(cli, "adc", i + 1);
+      ato_cli_reply_str(cli, "trigger", trigger);
+      ato_cli_json_arr_begin(cli, "channels");
+    } else {
+      ato_cli_core_printf(cli, "ADC%lu %-8s", (unsigned long)(i + 1), trigger);
+    }
+    for (uint32_t ch = 0; ch < 32; ch++) {
+      if (channels & (1UL << ch)) {
+        if (json) {
+          ato_cli_reply_uint(cli, NULL, ch);
+        } else {
+          ato_cli_core_printf(cli, " IN%lu", (unsigned long)ch);
+        }
+      }
+    }
+    if (json) {
+      ato_cli_json_arr_end(cli);
+      ato_cli_json_obj_end(cli);
+    } else {
+      ato_cli_core_puts(cli, "\r\n");
+    }
+  }
+  if (json) {
+    ato_cli_json_arr_end(cli);
+    ato_cli_reply_end(cli);
+  }
+}
+
+// Channels of the DACs, enabled or not (EN bit, set by HAL_DAC_Start), and
+// their output (DOR). Whether a channel is configured in CubeMX cannot be
+// read back (its mode register is the reset value): the UI also checks that
+// its pin is in analog mode.
+// plain: one line per channel, "DAC1 OUT1 on raw=1240 mv=999"
+// json: {"outputs":[{"dac":1,"ch":1,"enabled":true,"raw":1240,"mv":999},...]}
+ANALOG_HANDLER(dac_list_command) {
+  ato_analog_ctx_t *ctx = user_data;
+  (void)args;
+  (void)argc;
+  static const uint32_t channels[] = {DAC_CHANNEL_1, DAC_CHANNEL_2};
+  static const uint32_t enable[] = {DAC_CR_EN1, DAC_CR_EN2};
+  bool json = ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON;
+  if (json) {
+    ato_cli_reply_begin(cli);
+    ato_cli_json_arr_begin(cli, "outputs");
+  }
+  for (uint32_t i = 0; i < ATO_ANALOG_NB_DAC; i++) {
+    DAC_HandleTypeDef *hdac = ctx->cfg->dac[i];
+    if (hdac == NULL) {
+      continue;
+    }
+    for (uint32_t c = 0; c < COUNT_OF(channels); c++) {
+      bool enabled = READ_BIT(hdac->Instance->CR, enable[c]) != 0;
+      uint32_t raw = HAL_DAC_GetValue(hdac, channels[c]);
+      if (json) {
+        ato_cli_json_obj_begin(cli, NULL);
+        ato_cli_reply_uint(cli, "dac", i + 1);
+        ato_cli_reply_uint(cli, "ch", c + 1);
+        ato_cli_reply_bool(cli, "enabled", enabled);
+        ato_cli_reply_uint(cli, "raw", raw);
+        ato_cli_reply_uint(cli, "mv", raw_to_mv(raw));
+        ato_cli_json_obj_end(cli);
+      } else {
+        ato_cli_core_printf(cli, "DAC%lu OUT%lu %-3s raw=%lu mv=%lu\r\n",
+                            (unsigned long)(i + 1), (unsigned long)(c + 1),
+                            enabled ? "on" : "off", (unsigned long)raw,
+                            (unsigned long)raw_to_mv(raw));
+      }
+    }
+  }
+  if (json) {
+    ato_cli_json_arr_end(cli);
+    ato_cli_reply_end(cli);
+  }
 }
 
 ANALOG_HANDLER(dac_command) {

@@ -92,9 +92,29 @@ export const gpioSet = (pin: string, level: 0 | 1) =>
 
 // Analog ------------------------------------------------------------------
 
+export type AdcInfo = {
+  adc: number
+  trigger: "software" | "timer"
+  channels: number[] // regular sequence configured in CubeMX
+}
+
+/** The ADCs configured in CubeMX, and their channels. */
+export const adcList = () => cli<{ adcs: AdcInfo[] }>("adc list")
+
 /** Single conversion of a software-triggered ADC. */
 export const adcRead = (n: number, ch: number) =>
   cli<{ raw: number; mv: number }>(`adc ${n} ${ch}`)
+
+export type DacOutput = {
+  dac: number
+  ch: number
+  enabled: boolean // started (HAL_DAC_Start)
+  raw: number
+  mv: number
+}
+
+/** The channels of the DACs, enabled or not, and their current output. */
+export const dacList = () => cli<{ outputs: DacOutput[] }>("dac list")
 
 export const dac = (n: number, ch: number, mv: number) =>
   cli<{ raw: number; mv: number }>(`dac ${n} ${ch} ${mv}`)

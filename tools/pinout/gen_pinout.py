@@ -6,8 +6,10 @@
 
 The output lists the pins of the package by position: name as in CubeMX
 ("PC14-OSC32_IN"), type ("I/O", "Power", "MonoIO", "Reset"...) and the GPIO
-name ("PC14"), null for a pin that is not a GPIO. Used by the web UI
-(tools/bench/ui) to draw the package.
+name ("PC14"), null for a pin that is not a GPIO. It also maps the analog
+signals to their GPIO ("ADC3_IN1": "PB1", "DAC1_OUT1": "PA4"); the internal
+channels (temperature, VREFINT...) have no pin. Used by the web UI
+(tools/bench/ui) to draw the package and name the pins of the channels.
 
 Example (from the project root):
     uv run tools/pinout/gen_pinout.py -o tools/bench/ui/src/data/pinout.json
@@ -32,11 +34,18 @@ def local_name(tag: str) -> str:
 def parse(xml_path: Path) -> dict:
     root = ET.parse(xml_path).getroot()
     pins = []
+    analog = {}
     for pin in root:
         if local_name(pin.tag) != "Pin":
             continue
         name = pin.get("Name")
         m = re.match(r"P[A-Z]\d+", name)
+        if m:
+            for signal in pin:
+                sig = signal.get("Name", "")
+                if (local_name(signal.tag) == "Signal"
+                        and re.fullmatch(r"ADC\d+_IN\d+|DAC\d+_OUT\d+", sig)):
+                    analog[sig] = m.group(0)
         pins.append({
             "position": int(pin.get("Position")),
             "name": name,
@@ -52,6 +61,7 @@ def parse(xml_path: Path) -> dict:
         "mcu": root.get("RefName"),
         "package": root.get("Package"),
         "pins": pins,
+        "analog": dict(sorted(analog.items())),
     }
 
 

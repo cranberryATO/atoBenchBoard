@@ -12,6 +12,12 @@ def test_dac_set(cli):
     assert abs(reply["mv"] - 1000) <= 1
 
 
+def test_dac_list_reads_back_the_output(cli):
+    cli.command("dac 1 1 1000")
+    outputs = cli.command("dac list")["outputs"]
+    assert {"dac": 1, "ch": 1, "enabled": True, "raw": 1240, "mv": 999} in outputs
+
+
 @pytest.mark.parametrize("line, error", [
     ("dac 2 1 1000", "no DAC2"),
     ("dac 1 1 4000", "<mv>: out of range 0..3300"),
@@ -26,7 +32,27 @@ def test_adc_of_the_scope_is_not_available(cli):
 
 
 def test_adc_missing(cli):
-    assert cli.request("adc 3 1")["error"] == "no ADC3"
+    # ADC2 is not configured in CubeMX (no hadc2)
+    assert cli.request("adc 2 1")["error"] == "no ADC2"
+
+
+def test_adc_list(cli):
+    adcs = {a["adc"]: a for a in cli.command("adc list")["adcs"]}
+    # the scope ADC: timer triggered, input and output of the circuit
+    assert adcs[1]["trigger"] == "timer"
+    assert adcs[1]["channels"] == [1, 5]
+    assert 2 not in adcs
+
+
+def test_adc_read_every_software_channel(cli):
+    adcs = cli.command("adc list")["adcs"]
+    software = [a for a in adcs if a["trigger"] == "software"]
+    assert software, "no software-triggered ADC in CubeMX"
+    for a in software:
+        for ch in a["channels"]:
+            reply = cli.command(f"adc {a['adc']} {ch}")
+            assert 0 <= reply["raw"] <= FULL_SCALE
+            assert 0 <= reply["mv"] <= VREF_MV
 
 
 @pytest.mark.parametrize("shape", ["sine", "square"])

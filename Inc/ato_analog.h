@@ -59,7 +59,11 @@ typedef struct {
 // Handlers and parameter tables are defined in ato_analog.c.
 #define ATO_ANALOG_COMMANDS(X)                                                 \
   X("adc", "Read an ADC channel (raw and mV)", adc_command, adc_params)        \
+  X("adc list", "List the ADCs and their channels configured in CubeMX",       \
+    adc_list_command)                                                          \
   X("dac", "Set a DAC channel", dac_command, dac_params)                       \
+  X("dac list", "List the DAC channels, enabled or not, and their output",     \
+    dac_list_command)                                                          \
   X("gen sine", "Sine of the next acquisition, centered on 1650 mV",           \
     gen_sine_command, gen_periodic_params)                                     \
   X("gen square", "Square of the next acquisition, centered on 1650 mV",       \

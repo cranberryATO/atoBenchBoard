@@ -2,21 +2,25 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { adcRead, dac, gpioSet, gpioShow, pinsByName, type GpioPin } from "@/cli"
-import { NumberField } from "@/components/NumberField"
-import { Sparkline } from "@/components/Sparkline"
-import { Button } from "@/components/ui/button"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+  adcList,
+  adcRead,
+  dacList,
+  dac,
+  gpioSet,
+  gpioShow,
+  pinsByName,
+  type DacOutput,
+  type GpioPin,
+} from "@/cli"
+import { Sparkline } from "@/components/Sparkline"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
+import pinout from "@/data/pinout.json"
 import { HISTORY_LENGTH, pushSample, samples } from "@/lib/history"
-import { useLocalState } from "@/lib/session-state"
 
 const POLL_MS = 250
 const VREF_MV = 3300 // full scale of the ADC graphs
@@ -29,15 +33,34 @@ type AdcSample = AdcChannel & { mv?: number; error?: string }
 const gpioKey = (pin: string) => `gpio:${pin}`
 const adcKey = (a: AdcChannel) => `adc:${a.n}:${a.ch}`
 const adcName = (a: AdcChannel) => `ADC${a.n} IN${a.ch}`
+const dacKey = (d: DacOutput) => `dac:${d.dac}:${d.ch}`
+const dacName = (d: DacOutput) => `DAC${d.dac} OUT${d.ch}`
+
+// GPIO of an analog signal ("ADC3_IN1" -> "PB1"), from the CubeMX database;
+// none for an internal channel (temperature, VREFINT...)
+const analogPins: Record<string, string> = pinout.analog
+const adcPin = (a: AdcChannel) => analogPins[`ADC${a.n}_IN${a.ch}`]
+const dacPin = (d: DacOutput) => analogPins[`DAC${d.dac}_OUT${d.ch}`]
+
+/** Channel name, and its pin in muted text. */
+function ChannelLabel({ name, pin }: { name: string; pin?: string }) {
+  return (
+    <span className={LABEL}>
+      {name}
+      {pin && <span className="ml-1.5 text-muted-foreground">{pin}</span>}
+    </span>
+  )
+}
 
 /*
  * One poll: the GPIO configuration and levels, then each ADC channel; the
- * samples of the inputs are appended to their history (scrolling graphs).
+ * samples of the inputs and outputs are appended to their history
+ * (scrolling graphs).
  */
 async function poll(adcs: AdcChannel[]) {
   const pins = pinsByName(await gpioShow())
   for (const [name, p] of pins) {
-    if (p.mode === "IN") {
+    if (p.mode === "IN" || p.mode === "OUT") {
       pushSample(gpioKey(name), p.level)
     }
   }
@@ -52,7 +75,19 @@ async function poll(adcs: AdcChannel[]) {
       adcSamples.push({ ...a, error: (e as Error).message })
     }
   }
-  return { pins, adcSamples }
+  let dacs: DacOutput[] = []
+  let dacError: string | undefined
+  try {
+    dacs = (await dacList()).outputs
+    for (const d of dacs) {
+      if (d.enabled) {
+        pushSample(dacKey(d), d.mv)
+      }
+    }
+  } catch (e) {
+    dacError = (e as Error).message
+  }
+  return { pins, adcSamples, dacs, dacError }
 }
 
 function pinsInMode(pins: Map<string, GpioPin>, mode: GpioPin["mode"]) {
@@ -61,74 +96,92 @@ function pinsInMode(pins: Map<string, GpioPin>, mode: GpioPin["mode"]) {
 
 const seconds = (HISTORY_LENGTH * POLL_MS) / 1000
 
-function GpioInputs({ pins }: { pins: Map<string, GpioPin> }) {
+// same label width for all the graphs: they share the same time axis
+const LABEL = "w-28 shrink-0"
+
+function GpioRows({
+  pins,
+  color,
+}: {
+  pins: [string, GpioPin][]
+  color: string
+}) {
+  return pins.map(([name, p]) => (
+    <div key={name} className="flex items-center gap-3 text-sm">
+      <span className={LABEL}>{name}</span>
+      <Sparkline
+        values={samples(gpioKey(name))}
+        min={0}
+        max={1}
+        step
+        color={color}
+        title={`${name}: ${p.level}`}
+      />
+    </div>
+  ))
+}
+
+// Inputs and outputs on the same time axis: e.g. an output wired to an
+// input shows both levels one above the other.
+function GpioLevels({ pins }: { pins: Map<string, GpioPin> }) {
   const inputs = pinsInMode(pins, "IN")
+  const outputs = pinsInMode(pins, "OUT")
   return (
     <Card>
       <CardHeader>
-        <CardTitle>GPIO inputs</CardTitle>
-        <CardDescription>
-          Pins in input mode, the last {seconds} s.
-        </CardDescription>
+        <CardTitle>GPIO levels</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-1.5">
+        <div className="text-xs text-muted-foreground">Inputs</div>
         {inputs.length === 0 && (
           <p className="text-sm text-muted-foreground">No pin in input mode.</p>
         )}
-        {inputs.map(([name, p]) => (
-          <div key={name} className="flex items-center gap-3 text-sm">
-            <span className="w-12 shrink-0">{name}</span>
-            <Sparkline
-              values={samples(gpioKey(name))}
-              min={0}
-              max={1}
-              step
-              color="var(--pin-in)"
-              title={`${name}: ${p.level}`}
-            />
-          </div>
-        ))}
+        <GpioRows pins={inputs} color="var(--pin-in)" />
+        <div className="mt-2 text-xs text-muted-foreground">Outputs</div>
+        {outputs.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No pin in output mode.
+          </p>
+        )}
+        <GpioRows pins={outputs} color="var(--pin-out)" />
       </CardContent>
     </Card>
   )
 }
 
-function AdcInputs({
+// ADC inputs and DAC outputs on the same time axis and scale: e.g. a DAC
+// output wired to an ADC input shows both values one above the other.
+function AnalogLevels({
   adcs,
-  setAdcs,
   adcSamples,
+  adcError,
+  dacs,
+  dacError,
 }: {
   adcs: AdcChannel[]
-  setAdcs: (update: (previous: AdcChannel[]) => AdcChannel[]) => void
   adcSamples: AdcSample[]
+  adcError?: string
+  dacs: DacOutput[]
+  dacError?: string
 }) {
-  const [n, setN] = useState(3)
-  const [ch, setCh] = useState(1)
-  const add = () =>
-    setAdcs((list) =>
-      list.some((a) => a.n === n && a.ch === ch) ? list : [...list, { n, ch }]
-    )
-  const remove = (a: AdcChannel) =>
-    setAdcs((list) => list.filter((b) => b.n !== a.n || b.ch !== a.ch))
-
   return (
     <Card>
       <CardHeader>
-        <CardTitle>ADC inputs</CardTitle>
-        <CardDescription>
-          Software-triggered ADC channels (adc), 0 to {VREF_MV} mV, the last{" "}
-          {seconds} s.
-        </CardDescription>
+        <CardTitle>Analog levels</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-1.5">
-        {adcs.length === 0 && (
-          <p className="text-sm text-muted-foreground">No ADC channel.</p>
+        <div className="text-xs text-muted-foreground">ADC inputs</div>
+        {adcError && <p className="text-sm text-destructive">{adcError}</p>}
+        {!adcError && adcs.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No software-triggered ADC channel.
+          </p>
         )}
         {adcs.map((a) => {
           const s = adcSamples.find((x) => x.n === a.n && x.ch === a.ch)
           return (
             <div key={adcKey(a)} className="flex items-center gap-3 text-sm">
-              <span className="w-20 shrink-0">{adcName(a)}</span>
+              <ChannelLabel name={adcName(a)} pin={adcPin(a)} />
               {s?.error ? (
                 <span className="min-w-0 flex-1 truncate text-destructive">
                   {s.error}
@@ -139,27 +192,38 @@ function AdcInputs({
                   min={0}
                   max={VREF_MV}
                   color="var(--pin-anl)"
-                  title={s?.mv !== undefined ? `${adcName(a)}: ${s.mv} mV` : undefined}
+                  title={
+                    s?.mv !== undefined
+                      ? `${adcName(a)}: ${s.mv} mV`
+                      : undefined
+                  }
                 />
               )}
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`Remove ${adcName(a)}`}
-                onClick={() => remove(a)}
-              >
-                ×
-              </Button>
             </div>
           )
         })}
-        <div className="mt-3 grid grid-cols-3 items-end gap-3">
-          <NumberField id="adc-n" label="ADC" value={n} onChange={setN} />
-          <NumberField id="adc-ch" label="Channel" value={ch} onChange={setCh} />
-          <Button variant="outline" onClick={add}>
-            Add
-          </Button>
-        </div>
+
+        <div className="mt-2 text-xs text-muted-foreground">DAC outputs</div>
+        {dacError && <p className="text-sm text-destructive">{dacError}</p>}
+        {!dacError && dacs.every((d) => !d.enabled) && (
+          <p className="text-sm text-muted-foreground">
+            No enabled DAC channel.
+          </p>
+        )}
+        {dacs
+          .filter((d) => d.enabled)
+          .map((d) => (
+            <div key={dacKey(d)} className="flex items-center gap-3 text-sm">
+              <ChannelLabel name={dacName(d)} pin={dacPin(d)} />
+              <Sparkline
+                values={samples(dacKey(d))}
+                min={0}
+                max={VREF_MV}
+                color="var(--pin-out)"
+                title={`${dacName(d)}: ${d.mv} mV`}
+              />
+            </div>
+          ))}
       </CardContent>
     </Card>
   )
@@ -178,11 +242,12 @@ function GpioOutputs({ pins }: { pins: Map<string, GpioPin> }) {
     <Card>
       <CardHeader>
         <CardTitle>GPIO outputs</CardTitle>
-        <CardDescription>Pins configured as outputs in CubeMX.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {outputs.length === 0 && (
-          <p className="text-sm text-muted-foreground">No pin in output mode.</p>
+          <p className="text-sm text-muted-foreground">
+            No pin in output mode.
+          </p>
         )}
         {outputs.map(([name, p]) => (
           <div key={name} className="flex items-center gap-3">
@@ -202,43 +267,108 @@ function GpioOutputs({ pins }: { pins: Map<string, GpioPin> }) {
   )
 }
 
-function Dac() {
-  const [n, setN] = useState(1)
-  const [ch, setCh] = useState(1)
-  const [mv, setMv] = useState(1000)
+function DacRow({ d }: { d: DacOutput }) {
+  const queryClient = useQueryClient()
+  // value being edited, until the board has applied it (next poll)
+  const [draft, setDraft] = useState<number | null>(null)
   const set = useMutation({
-    mutationFn: () => dac(n, ch, mv),
-    onSuccess: (r) =>
-      toast.success(`DAC${n} channel ${ch}: ${r.mv} mV (raw ${r.raw})`),
-    onError,
+    mutationFn: (mv: number) => dac(d.dac, d.ch, mv),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["ios"] })
+      setDraft(null)
+    },
+    onError: (e: Error) => {
+      setDraft(null)
+      onError(e)
+    },
   })
+  const value = draft ?? d.mv
+  const commit = (mv: number) => {
+    if (Number.isFinite(mv)) {
+      set.mutate(Math.round(Math.min(Math.max(mv, 0), VREF_MV)))
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      <ChannelLabel name={dacName(d)} pin={dacPin(d)} />
+      <Slider
+        className="min-w-0 flex-1"
+        min={0}
+        max={VREF_MV}
+        step={10}
+        value={[value]}
+        disabled={set.isPending}
+        onValueChange={(v) => setDraft(Array.isArray(v) ? v[0] : v)}
+        onValueCommitted={(v) => commit(Array.isArray(v) ? v[0] : v)}
+        aria-label={`${dacName(d)} (mV)`}
+      />
+      <Input
+        type="number"
+        className="w-20"
+        min={0}
+        max={VREF_MV}
+        value={value}
+        disabled={set.isPending}
+        onChange={(e) => setDraft(e.target.valueAsNumber)}
+        onBlur={() => draft !== null && commit(draft)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && draft !== null) {
+            commit(draft)
+          }
+        }}
+        aria-label={`${dacName(d)} (mV)`}
+      />
+      <span className="text-muted-foreground">mV</span>
+    </div>
+  )
+}
+
+// The DAC channels that can be set: already enabled, or with their pin in
+// analog mode (configured for the DAC in CubeMX); e.g. not DAC1 OUT2 when
+// its pin PA5 is a GPIO output.
+function Dacs({
+  dacs,
+  pins,
+  error,
+}: {
+  dacs: DacOutput[]
+  pins: Map<string, GpioPin>
+  error?: string
+}) {
+  const usable = dacs.filter(
+    (d) => d.enabled || pins.get(dacPin(d) ?? "")?.mode === "ANL"
+  )
   return (
     <Card>
       <CardHeader>
-        <CardTitle>DAC</CardTitle>
-        <CardDescription>Static output voltage.</CardDescription>
+        <CardTitle>DAC outputs</CardTitle>
       </CardHeader>
-      <CardContent className="grid grid-cols-3 items-end gap-3">
-        <NumberField id="dac-n" label="DAC" value={n} onChange={setN} />
-        <NumberField id="dac-ch" label="Channel" value={ch} onChange={setCh} />
-        <NumberField id="dac-mv" label="mV" value={mv} onChange={setMv} />
-        <Button
-          className="col-span-3"
-          disabled={set.isPending}
-          onClick={() => set.mutate()}
-        >
-          Set
-        </Button>
+      <CardContent className="flex flex-col gap-3">
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {!error && usable.length === 0 && (
+          <p className="text-sm text-muted-foreground">No DAC channel.</p>
+        )}
+        {usable.map((d) => (
+          <DacRow key={dacKey(d)} d={d} />
+        ))}
       </CardContent>
     </Card>
   )
 }
 
 export function IOs() {
-  // ADC3 IN1: the software-triggered channel configured in CubeMX
-  const [adcs, setAdcs] = useLocalState<AdcChannel[]>("ios.adcs", [
-    { n: 3, ch: 1 },
-  ])
+  // the configuration does not change while the board runs: read once
+  const list = useQuery({
+    queryKey: ["adc list"],
+    queryFn: adcList,
+    staleTime: Infinity,
+  })
+  // timer-triggered ADCs (the scope) cannot be read one conversion at a time
+  const adcs: AdcChannel[] = (list.data?.adcs ?? [])
+    .filter((a) => a.trigger === "software")
+    .flatMap((a) => a.channels.map((ch) => ({ n: a.adc, ch })))
+
   const ios = useQuery({
     queryKey: ["ios", adcs],
     queryFn: () => poll(adcs),
@@ -257,16 +387,22 @@ export function IOs() {
         </p>
       )}
       <div className="flex flex-col gap-4">
-        <GpioInputs pins={pins} />
-        <AdcInputs
+        <GpioLevels pins={pins} />
+        <AnalogLevels
           adcs={adcs}
-          setAdcs={setAdcs}
           adcSamples={ios.data?.adcSamples ?? []}
+          adcError={list.error?.message}
+          dacs={ios.data?.dacs ?? []}
+          dacError={ios.data?.dacError}
         />
       </div>
       <div className="flex flex-col gap-4">
         <GpioOutputs pins={pins} />
-        <Dac />
+        <Dacs
+          dacs={ios.data?.dacs ?? []}
+          pins={pins}
+          error={ios.data?.dacError}
+        />
       </div>
     </div>
   )
