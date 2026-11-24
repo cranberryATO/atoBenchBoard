@@ -24,12 +24,17 @@
  * - DAC channel: trigger source = timer TRGO (enabled here only during an
  *   acquisition), DMA circular mode, half-word.
  *
- * Single instance. Commands run in the calling CLI task; a mutex serializes
- * the access to the analog hardware between several CLIs.
+ * The context is provided by the caller; several instances can coexist
+ * (on different ADC / DAC / timer), registered in different CLIs. Commands
+ * run in the calling CLI task; a mutex per instance serializes the access to
+ * its hardware between several CLIs.
  */
 
+#include "FreeRTOS.h"
+#include "ato_adc.h"
 #include "ato_cli.h"
 #include "main.h"
+#include "semphr.h"
 #include <stdint.h>
 
 #define ATO_ANALOG_NB_ADC 5
@@ -47,11 +52,55 @@ typedef struct {
   const char *scope_out_label; // e.g. "adc1.5"
 } ato_analog_config_t;
 
+#define ATO_ANALOG_SCOPE_MAX_POINTS 4096
+
+// Handlers and parameter tables are defined in ato_analog.c.
+#define ATO_ANALOG_COMMANDS(X)                                                 \
+  X("adc", "Read an ADC channel (raw and mV)", adc_command, adc_params)        \
+  X("dac", "Set a DAC channel", dac_command, dac_params)                       \
+  X("gen sine", "Sine of the next acquisition, centered on 1650 mV",           \
+    gen_sine_command, gen_periodic_params)                                     \
+  X("gen square", "Square of the next acquisition, centered on 1650 mV",       \
+    gen_square_command, gen_periodic_params)                                   \
+  X("gen step", "Step of the next acquisition, centered on 1650 mV",           \
+    gen_step_command, gen_step_params)                                         \
+  X("acq", "Generate the waveform and acquire n points at fs Hz", acq_command, \
+    acq_params)                                                                \
+  X("dump", "Dump the last acquisition (hex CSV in,out)", dump_command)
+
+/**
+ * Context of an instance; its fields are private to ato_analog.c.
+ * About 24 KB with the scope buffers: allocate it static, never on a task
+ * stack.
+ */
+typedef struct ato_analog_ctx {
+  const ato_analog_config_t *cfg;
+  ato_adc_t adc[ATO_ANALOG_NB_ADC];
+  ato_adc_t *scope_adc;
+  SemaphoreHandle_t lock; // analog hardware and scope data
+
+  // waveform, set by "gen"
+  uint8_t shape; // shape_t
+  uint32_t freq_hz;
+  uint32_t vpp_mv;
+
+  // last acquisition
+  uint32_t n;      // number of points, 0: no data
+  uint64_t fs_mhz; // actual sample rate, in mHz
+  uint64_t f_mhz;  // actual waveform frequency, in mHz (0 for step)
+
+  uint16_t dac_table[ATO_ANALOG_SCOPE_MAX_POINTS];
+  uint16_t samples[2 * ATO_ANALOG_SCOPE_MAX_POINTS]; // in, out interleaved
+
+  ATO_CLI_ITEMS(ATO_ANALOG_COMMANDS);
+} ato_analog_ctx_t;
+
 /**
  * @brief  Set up the analog hardware and register the commands in `cli`.
- *         Must be called only once, can be called before the scheduler
- *         starts. `cfg` must stay valid (typically static const).
+ *         Can be called before the scheduler starts. `ctx` and `cfg` must
+ *         stay valid (typically static and static const).
  */
-void ato_analog_init(const ato_analog_config_t *cfg, ato_cli_ctx_t *cli);
+void ato_analog_init(ato_analog_ctx_t *ctx, const ato_analog_config_t *cfg,
+                     ato_cli_ctx_t *cli);
 
 #endif /* ATO_ANALOG_H */

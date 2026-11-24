@@ -13,12 +13,12 @@
 #define CLI_STACK_WORDS 512 // 2 KB: vsnprintf
 #define CLI_PRIORITY (tskIDLE_PRIORITY + 1)
 
-static void ps_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
-                       uint8_t argc);
-static void so_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
-                       uint8_t argc);
-static void stats_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
-                          uint8_t argc);
+static void ps_command(ato_cli_core_t *cli, void *user_data,
+                       const ato_cli_arg_t *args, uint8_t argc);
+static void so_command(ato_cli_core_t *cli, void *user_data,
+                       const ato_cli_arg_t *args, uint8_t argc);
+static void stats_command(ato_cli_core_t *cli, void *user_data,
+                          const ato_cli_arg_t *args, uint8_t argc);
 
 static const ato_cli_command_t cli_commands[] = {
     {"ps", "Show the FreeRTOS tasks", ps_command},
@@ -28,7 +28,7 @@ static const ato_cli_command_t cli_commands[] = {
 
 struct ato_cli_ctx {
   ato_uart_t uart;    // byte stream
-  ato_cli_core_t cli; // command interpreter, its user pointer is this ctx
+  ato_cli_core_t cli; // command interpreter
   ato_cli_list_item_t
       cmd_items[COUNT_OF(cli_commands)]; // one per registered command
 
@@ -59,8 +59,9 @@ static char task_state_char(eTaskState state) {
 }
 
 // Same columns as vTaskList(), which needs an unbounded output buffer.
-static void ps_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
-                       uint8_t argc) {
+static void ps_command(ato_cli_core_t *cli, void *user_data,
+                       const ato_cli_arg_t *args, uint8_t argc) {
+  (void)user_data;
   (void)args;
   (void)argc;
   // margin for tasks created between the count and the snapshot
@@ -84,9 +85,10 @@ static void ps_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
   vPortFree(tasks);
 }
 
-static void so_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
-                       uint8_t argc) {
+static void so_command(ato_cli_core_t *cli, void *user_data,
+                       const ato_cli_arg_t *args, uint8_t argc) {
   (void)cli;
+  (void)user_data;
   (void)args;
   (void)argc;
   volatile int onStack[512]; // 2 KB: the whole task stack
@@ -96,11 +98,11 @@ static void so_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
   (void)onStack[0];
 }
 
-static void stats_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
-                          uint8_t argc) {
+static void stats_command(ato_cli_core_t *cli, void *user_data,
+                          const ato_cli_arg_t *args, uint8_t argc) {
   (void)args;
   (void)argc;
-  const ato_cli_ctx_t *ctx = ato_cli_core_user(cli);
+  const ato_cli_ctx_t *ctx = user_data;
   const ato_uart_t *u = &ctx->uart;
   ato_cli_core_printf(cli, "tx dropped bytes : %lu\r\n",
                       (unsigned long)u->tx_dropped_bytes);
@@ -211,10 +213,10 @@ ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
   memset(ctx, 0, sizeof(*ctx));
 
   ato_uart_init(&ctx->uart, huart);
-  ato_cli_core_init(&ctx->cli, ctx, uart_write, &ctx->uart);
+  ato_cli_core_init(&ctx->cli, uart_write, &ctx->uart);
   // list items live in the context: no extra allocation that could fail
   for (size_t i = 0; i < COUNT_OF(cli_commands); i++) {
-    ato_cli_core_register(&ctx->cli, &cli_commands[i], &ctx->cmd_items[i]);
+    ato_cli_core_register(&ctx->cli, &cli_commands[i], &ctx->cmd_items[i], ctx);
   }
 
   if (xTaskCreate(cli_task, task_name, CLI_STACK_WORDS, ctx, CLI_PRIORITY,
@@ -225,7 +227,7 @@ ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
 }
 
 void ato_cli_register_command(ato_cli_ctx_t *ctx, const ato_cli_command_t *def,
-                              ato_cli_list_item_t *item) {
+                              ato_cli_list_item_t *item, void *user_data) {
   configASSERT(ctx != NULL);
-  ato_cli_core_register(&ctx->cli, def, item);
+  ato_cli_core_register(&ctx->cli, def, item, user_data);
 }

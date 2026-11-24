@@ -133,10 +133,10 @@ typedef union {
  * the number of parameters when optional ones are missing).
  * Writes its output with ato_cli_core_write(), _puts() or _printf(), as much
  * as it wants, and returns when the command is done. `cli` is the
- * interpreter running the command; use ato_cli_core_user() to reach the
- * owner context.
+ * interpreter running the command, `user_data` the pointer given when the
+ * command was registered in it (typically the context of the module).
  */
-typedef void (*ato_cli_command_fn)(ato_cli_core_t *cli,
+typedef void (*ato_cli_command_fn)(ato_cli_core_t *cli, void *user_data,
                                    const ato_cli_arg_t *args, uint8_t argc);
 
 /** Command descriptor, meant to be a const global. */
@@ -164,6 +164,7 @@ typedef struct {
 /** Element of the per-interpreter list of registered commands. */
 typedef struct ato_cli_list_item {
   const ato_cli_command_t *def;
+  void *user_data; // given to the handler
   struct ato_cli_list_item *next;
 } ato_cli_list_item_t;
 
@@ -173,7 +174,6 @@ struct ato_cli_core {
   ato_cli_list_item_t *last;            // list tail, for appending
   ato_cli_write_fn write;               // output sink
   void *write_arg;                      // its argument (e.g. the UART instance)
-  void *user;                           // owner context, for command handlers
   const char *menu;                     // current menu: the first `menu_len`
   size_t menu_len;                      // chars of a command name; 0: root
   char printf_buf[ATO_CLI_PRINTF_SIZE]; // formatting buffer of _printf()
@@ -183,7 +183,7 @@ struct ato_cli_core {
  * Initialise an interpreter: empty command list (except "help"), output
  * sent to `write(write_arg, ...)`, root menu.
  */
-void ato_cli_core_init(ato_cli_core_t *cli, void *user, ato_cli_write_fn write,
+void ato_cli_core_init(ato_cli_core_t *cli, ato_cli_write_fn write,
                        void *write_arg);
 
 /**
@@ -192,9 +192,10 @@ void ato_cli_core_init(ato_cli_core_t *cli, void *user, ato_cli_write_fn write,
  * running commands (not from an ISR). `def` and `item` must stay valid for
  * the lifetime of the interpreter (typically static / const). An item links
  * one command into one interpreter: use one item per (command, interpreter).
+ * `user_data` is given to the handler of the command.
  */
 void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
-                           ato_cli_list_item_t *item);
+                           ato_cli_list_item_t *item, void *user_data);
 
 /**
  * Run the command line `line`; returns when the command is done and all its
@@ -221,8 +222,5 @@ void ato_cli_core_puts(ato_cli_core_t *cli, const char *str);
  */
 void ato_cli_core_printf(ato_cli_core_t *cli, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
-
-/** Owner context given to ato_cli_core_init(). */
-void *ato_cli_core_user(const ato_cli_core_t *cli);
 
 #endif /* ATO_CLI_CORE_H */

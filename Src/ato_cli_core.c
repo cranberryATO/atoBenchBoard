@@ -41,8 +41,8 @@
 
 #define SYNOPSIS_SIZE 64 // "name <p1> [<p2>]" in the usage and the help
 
-static void help_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
-                         uint8_t argc);
+static void help_command(ato_cli_core_t *cli, void *user_data,
+                         const ato_cli_arg_t *args, uint8_t argc);
 
 static const ato_cli_param_t help_params[] = {
     {.name = "name",
@@ -66,7 +66,7 @@ typedef enum {
 
 typedef struct {
   match_t match;
-  const ato_cli_command_t *def;
+  const ato_cli_list_item_t *item;
   uint8_t used;   // MATCH_FULL: number of words of the command name
   size_t covered; // MATCH_PREFIX: length of the name covered by the words
 } lookup_t;
@@ -117,9 +117,9 @@ static lookup_t lookup(const ato_cli_core_t *cli, const char *prefix,
     match_t m = match(item->def->command, prefix, prefix_len, words, count,
                       &used, &covered);
     if (m == MATCH_FULL && (best.match != MATCH_FULL || used > best.used)) {
-      best = (lookup_t){MATCH_FULL, item->def, used, 0};
+      best = (lookup_t){MATCH_FULL, item, used, 0};
     } else if (m == MATCH_PREFIX && best.match == MATCH_NONE) {
-      best = (lookup_t){MATCH_PREFIX, item->def, 0, covered};
+      best = (lookup_t){MATCH_PREFIX, item, 0, covered};
     }
   }
   return best;
@@ -213,8 +213,9 @@ static bool convert(ato_cli_core_t *cli, const ato_cli_param_t *p,
   return false;
 }
 
-static void run_command(ato_cli_core_t *cli, const ato_cli_command_t *def,
+static void run_command(ato_cli_core_t *cli, const ato_cli_list_item_t *item,
                         const char *const *words, uint8_t count) {
+  const ato_cli_command_t *def = item->def;
   uint8_t required = 0;
   for (uint8_t i = 0; i < def->nb_params; i++) {
     if (!def->params[i].optional) {
@@ -234,29 +235,29 @@ static void run_command(ato_cli_core_t *cli, const ato_cli_command_t *def,
       return;
     }
   }
-  def->handler(cli, args, count);
+  def->handler(cli, item->user_data, args, count);
 }
 
 /*-----------------------------------------------------------*/
 
-void ato_cli_core_init(ato_cli_core_t *cli, void *user, ato_cli_write_fn write,
+void ato_cli_core_init(ato_cli_core_t *cli, ato_cli_write_fn write,
                        void *write_arg) {
   configASSERT(cli != NULL);
   configASSERT(write != NULL);
 
   cli->commands.def = &help_command_def;
+  cli->commands.user_data = NULL;
   cli->commands.next = NULL;
   cli->last = &cli->commands;
   cli->write = write;
   cli->write_arg = write_arg;
-  cli->user = user;
   cli->menu = NULL;
   cli->menu_len = 0;
 }
 /*-----------------------------------------------------------*/
 
 void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
-                           ato_cli_list_item_t *item) {
+                           ato_cli_list_item_t *item, void *user_data) {
   configASSERT(cli != NULL);
   configASSERT(def != NULL);
   configASSERT(item != NULL);
@@ -273,6 +274,7 @@ void ato_cli_core_register(ato_cli_core_t *cli, const ato_cli_command_t *def,
   {
     /* Reference the command being registered from the list item. */
     item->def = def;
+    item->user_data = user_data;
 
     /* The new list item is appended to the end of the list. */
     item->next = NULL;
@@ -332,10 +334,10 @@ void ato_cli_core_process(ato_cli_core_t *cli, char *line) {
 
   switch (r.match) {
   case MATCH_FULL:
-    run_command(cli, r.def, words + r.used, count - r.used);
+    run_command(cli, r.item, words + r.used, count - r.used);
     break;
   case MATCH_PREFIX: // enter the menu; its name is a part of the command name
-    cli->menu = r.def->command;
+    cli->menu = r.item->def->command;
     cli->menu_len = r.covered;
     break;
   case MATCH_NONE:
@@ -384,9 +386,6 @@ void ato_cli_core_printf(ato_cli_core_t *cli, const char *fmt, ...) {
 }
 /*-----------------------------------------------------------*/
 
-void *ato_cli_core_user(const ato_cli_core_t *cli) { return cli->user; }
-/*-----------------------------------------------------------*/
-
 /* Help --------------------------------------------------------------------- */
 
 static void help_params_detail(ato_cli_core_t *cli,
@@ -415,8 +414,9 @@ static void help_params_detail(ato_cli_core_t *cli,
  * the commands starting with it (in the menu, else from the root), with the
  * description of their parameters.
  */
-static void help_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
-                         uint8_t argc) {
+static void help_command(ato_cli_core_t *cli, void *user_data,
+                         const ato_cli_arg_t *args, uint8_t argc) {
+  (void)user_data;
   const char *const *words = argc > 0 ? &args[0].s : NULL;
   const char *prefix = cli->menu;
   size_t prefix_len = cli->menu_len;

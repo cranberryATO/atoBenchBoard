@@ -142,7 +142,8 @@ void MX_FREERTOS_Init(void) {
       .scope_in_label = "adc1.1",
       .scope_out_label = "adc1.5",
   };
-  ato_analog_init(&analog_cfg, cli1);
+  static ato_analog_ctx_t analog_ctx; // ~24 KB: static, not on the stack
+  ato_analog_init(&analog_ctx, &analog_cfg, cli1);
   static ato_gpio_ctx_t gpio_ctx;
   ato_gpio_init(&gpio_ctx, cli1);
   static ato_tim_ctx_t tim_ctx;

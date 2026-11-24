@@ -22,14 +22,15 @@ ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
 /**
  * @brief  Register an extra command in a CLI, running or not yet started.
  *         No allocation: the caller provides the list item. Callable from
- *         any task (not from an ISR). In its handler, the command gets this
- *         CLI context with ato_cli_core_user(cli).
+ *         any task (not from an ISR).
  * @param  ctx   CLI returned by ato_cli_create_task().
  * @param  def   Command descriptor (typically a static const).
  * @param  item  List item storage (typically static), one per command and
  *               per CLI. Both must stay valid for the lifetime of the CLI.
+ * @param  user_data  Given to the handler of the command (typically the
+ *                    context of the module).
  */
 void ato_cli_register_command(ato_cli_ctx_t *ctx, const ato_cli_command_t *def,
-                              ato_cli_list_item_t *item);
+                              ato_cli_list_item_t *item, void *user_data);
 
 #endif /* ATO_CLI_H */

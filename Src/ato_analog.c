@@ -9,12 +9,13 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #define VREF_MV 3300    // VDDA on the Nucleo board (assumed, not measured)
 #define FULL_SCALE 4095 // 12 bits, for both ADC and DAC
 #define CENTER_RAW 2048 // waveforms are centered on VREF/2
 
-#define SCOPE_MAX_POINTS 4096
+#define SCOPE_MAX_POINTS ATO_ANALOG_SCOPE_MAX_POINTS
 #define SCOPE_MIN_POINTS 16
 #define SCOPE_MIN_FS 10
 #define SCOPE_MAX_FS 200000   // 2 conversions of ~1.4 us each, with margin
@@ -26,7 +27,8 @@ typedef enum { SHAPE_SINE, SHAPE_SQUARE, SHAPE_STEP } shape_t;
 static const char *const shape_names[] = {"sine", "square", "step"};
 
 #define ANALOG_HANDLER(fn)                                                     \
-  static void fn(ato_cli_core_t *cli, const ato_cli_arg_t *args, uint8_t argc)
+  static void fn(ato_cli_core_t *cli, void *user_data,                         \
+                 const ato_cli_arg_t *args, uint8_t argc)
 ANALOG_HANDLER(adc_command);
 ANALOG_HANDLER(dac_command);
 ANALOG_HANDLER(gen_sine_command);
@@ -56,44 +58,7 @@ static const ato_cli_param_t acq_params[] = {
     ATO_CLI_INT("n", "number of points", SCOPE_MIN_POINTS, SCOPE_MAX_POINTS),
 };
 
-#define ANALOG_COMMANDS(X)                                                     \
-  X("adc", "Read an ADC channel (raw and mV)", adc_command, adc_params)        \
-  X("dac", "Set a DAC channel", dac_command, dac_params)                       \
-  X("gen sine", "Sine of the next acquisition, centered on 1650 mV",           \
-    gen_sine_command, gen_periodic_params)                                     \
-  X("gen square", "Square of the next acquisition, centered on 1650 mV",       \
-    gen_square_command, gen_periodic_params)                                   \
-  X("gen step", "Step of the next acquisition, centered on 1650 mV",           \
-    gen_step_command, gen_step_params)                                         \
-  X("acq", "Generate the waveform and acquire n points at fs Hz", acq_command, \
-    acq_params)                                                                \
-  X("dump", "Dump the last acquisition (hex CSV in,out)", dump_command)
-
-ATO_CLI_TABLE(analog_commands, ANALOG_COMMANDS);
-
-typedef struct {
-  const ato_analog_config_t *cfg;
-  ato_adc_t adc[ATO_ANALOG_NB_ADC];
-  ato_adc_t *scope_adc;
-  SemaphoreHandle_t lock; // analog hardware and scope data
-
-  // waveform, set by "gen"
-  shape_t shape;
-  uint32_t freq_hz;
-  uint32_t vpp_mv;
-
-  // last acquisition
-  uint32_t n;      // number of points, 0: no data
-  uint64_t fs_mhz; // actual sample rate, in mHz
-  uint64_t f_mhz;  // actual waveform frequency, in mHz (0 for step)
-
-  ato_cli_list_item_t cmd_items[COUNT_OF(analog_commands)];
-} analog_ctx_t;
-
-static analog_ctx_t s_ctx;
-
-static uint16_t dac_table[SCOPE_MAX_POINTS];
-static uint16_t samples[2 * SCOPE_MAX_POINTS]; // in, out interleaved
+ATO_CLI_TABLE(analog_commands, ATO_ANALOG_COMMANDS);
 
 /* Helpers ------------------------------------------------------------------ */
 
@@ -158,13 +123,14 @@ static uint64_t tim_set_rate(TIM_HandleTypeDef *htim, uint32_t fs) {
 /* Unit commands ------------------------------------------------------------ */
 
 ANALOG_HANDLER(adc_command) {
+  ato_analog_ctx_t *ctx = user_data;
   (void)argc;
   uint32_t n = args[0].i, ch = args[1].i;
-  if (s_ctx.cfg->adc[n - 1] == NULL) {
+  if (ctx->cfg->adc[n - 1] == NULL) {
     ato_cli_core_printf(cli, "error: no ADC%lu\r\n", (unsigned long)n);
     return;
   }
-  ato_adc_t *a = &s_ctx.adc[n - 1];
+  ato_adc_t *a = &ctx->adc[n - 1];
   if (!ato_adc_is_software_triggered(a)) {
     ato_cli_core_printf(cli, "error: ADC%lu is timer triggered (scope)\r\n",
                         (unsigned long)n);
@@ -172,9 +138,9 @@ ANALOG_HANDLER(adc_command) {
   }
 
   uint16_t raw;
-  xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
+  xSemaphoreTake(ctx->lock, portMAX_DELAY);
   bool ok = ato_adc_read(a, ch, &raw);
-  xSemaphoreGive(s_ctx.lock);
+  xSemaphoreGive(ctx->lock);
 
   if (!ok) {
     ato_cli_core_printf(cli, "error: invalid channel %lu\r\n",
@@ -186,19 +152,20 @@ ANALOG_HANDLER(adc_command) {
 }
 
 ANALOG_HANDLER(dac_command) {
+  ato_analog_ctx_t *ctx = user_data;
   (void)argc;
   uint32_t n = args[0].i, mv = args[2].i;
   uint32_t channel = args[1].i == 1 ? DAC_CHANNEL_1 : DAC_CHANNEL_2;
-  if (s_ctx.cfg->dac[n - 1] == NULL) {
+  if (ctx->cfg->dac[n - 1] == NULL) {
     ato_cli_core_printf(cli, "error: no DAC%lu\r\n", (unsigned long)n);
     return;
   }
 
   uint32_t raw = mv_to_raw(mv);
   // the scope channel is only triggered during "acq", which holds the lock
-  xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
-  dac_set(s_ctx.cfg->dac[n - 1], channel, raw);
-  xSemaphoreGive(s_ctx.lock);
+  xSemaphoreTake(ctx->lock, portMAX_DELAY);
+  dac_set(ctx->cfg->dac[n - 1], channel, raw);
+  xSemaphoreGive(ctx->lock);
 
   ato_cli_core_printf(cli, "ok raw=%lu mv=%lu\r\n", (unsigned long)raw,
                       (unsigned long)raw_to_mv(raw));
@@ -206,85 +173,90 @@ ANALOG_HANDLER(dac_command) {
 
 /* Scope commands ----------------------------------------------------------- */
 
-static void gen_set(ato_cli_core_t *cli, shape_t shape, uint32_t freq,
-                    uint32_t vpp) {
-  xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
-  s_ctx.shape = shape;
-  s_ctx.freq_hz = freq;
-  s_ctx.vpp_mv = vpp;
-  xSemaphoreGive(s_ctx.lock);
+static void gen_set(ato_cli_core_t *cli, ato_analog_ctx_t *ctx, shape_t shape,
+                    uint32_t freq, uint32_t vpp) {
+  xSemaphoreTake(ctx->lock, portMAX_DELAY);
+  ctx->shape = shape;
+  ctx->freq_hz = freq;
+  ctx->vpp_mv = vpp;
+  xSemaphoreGive(ctx->lock);
 
   ato_cli_core_printf(cli, "ok shape=%s f=%lu vpp=%lu\r\n", shape_names[shape],
                       (unsigned long)freq, (unsigned long)vpp);
 }
 
 ANALOG_HANDLER(gen_sine_command) {
+  ato_analog_ctx_t *ctx = user_data;
   (void)argc;
-  gen_set(cli, SHAPE_SINE, args[0].i, args[1].i);
+  gen_set(cli, ctx, SHAPE_SINE, args[0].i, args[1].i);
 }
 
 ANALOG_HANDLER(gen_square_command) {
+  ato_analog_ctx_t *ctx = user_data;
   (void)argc;
-  gen_set(cli, SHAPE_SQUARE, args[0].i, args[1].i);
+  gen_set(cli, ctx, SHAPE_SQUARE, args[0].i, args[1].i);
 }
 
 ANALOG_HANDLER(gen_step_command) {
+  ato_analog_ctx_t *ctx = user_data;
   (void)argc;
-  gen_set(cli, SHAPE_STEP, 0, args[0].i);
+  gen_set(cli, ctx, SHAPE_STEP, 0, args[0].i);
 }
 
 // Fill dac_table for the current waveform; returns its length (0: the
 // frequency does not fit with this sample rate).
-static uint32_t build_table(uint32_t fs, uint32_t n) {
-  int32_t half = (int32_t)(mv_to_raw(s_ctx.vpp_mv) / 2);
+static uint32_t build_table(ato_analog_ctx_t *ctx, uint32_t fs, uint32_t n) {
+  int32_t half = (int32_t)(mv_to_raw(ctx->vpp_mv) / 2);
   uint16_t low = clamp_raw(CENTER_RAW - half);
   uint16_t high = clamp_raw(CENTER_RAW + half);
 
-  if (s_ctx.shape == SHAPE_STEP) {
+  if (ctx->shape == SHAPE_STEP) {
     // first level long enough to see the circuit at rest, then the step
     for (uint32_t i = 0; i < n; i++) {
-      dac_table[i] = i < n / 8 ? low : high;
+      ctx->dac_table[i] = i < n / 8 ? low : high;
     }
     return n;
   }
 
-  uint32_t len = (fs + s_ctx.freq_hz / 2) / s_ctx.freq_hz; // rounded
+  uint32_t len = (fs + ctx->freq_hz / 2) / ctx->freq_hz; // rounded
   if (len < SCOPE_MIN_PERIOD || len > SCOPE_MAX_POINTS) {
     return 0;
   }
   for (uint32_t i = 0; i < len; i++) {
-    if (s_ctx.shape == SHAPE_SINE) {
+    if (ctx->shape == SHAPE_SINE) {
       float s = sinf(2.0f * (float)M_PI * (float)i / (float)len);
-      dac_table[i] = clamp_raw(CENTER_RAW + (int32_t)lrintf(s * (float)half));
+      ctx->dac_table[i] =
+          clamp_raw(CENTER_RAW + (int32_t)lrintf(s * (float)half));
     } else {
-      dac_table[i] = i < len / 2 ? low : high;
+      ctx->dac_table[i] = i < len / 2 ? low : high;
     }
   }
   return len;
 }
 
 ANALOG_HANDLER(acq_command) {
+  ato_analog_ctx_t *ctx = user_data;
   (void)argc;
-  const ato_analog_config_t *cfg = s_ctx.cfg;
+  const ato_analog_config_t *cfg = ctx->cfg;
   uint32_t fs = args[0].i, n = args[1].i;
 
-  xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
+  xSemaphoreTake(ctx->lock, portMAX_DELAY);
 
-  uint32_t len = build_table(fs, n);
+  uint32_t len = build_table(ctx, fs, n);
   if (len == 0) {
-    xSemaphoreGive(s_ctx.lock);
+    xSemaphoreGive(ctx->lock);
     ato_cli_core_printf(cli, "error: f must be between fs/%u and fs/%u\r\n",
                         SCOPE_MAX_POINTS, SCOPE_MIN_PERIOD);
     return;
   }
 
   // let the circuit settle on the first level
-  dac_set(cfg->scope_dac, cfg->scope_dac_channel, dac_table[0]);
+  dac_set(cfg->scope_dac, cfg->scope_dac_channel, ctx->dac_table[0]);
   vTaskDelay(pdMS_TO_TICKS(SCOPE_SETTLE_MS));
 
-  s_ctx.n = 0; // no valid data until the acquisition is complete
-  s_ctx.fs_mhz = tim_set_rate(cfg->scope_tim, fs);
-  s_ctx.f_mhz = s_ctx.shape == SHAPE_STEP ? 0 : s_ctx.fs_mhz / len;
+  ctx->n = 0; // no valid data until the acquisition is complete
+  ctx->fs_mhz = tim_set_rate(cfg->scope_tim, fs);
+  ctx->f_mhz = ctx->shape == SHAPE_STEP ? 0 : ctx->fs_mhz / len;
 
   // DAC paced by the timer, table repeated by the circular DMA
   if (HAL_DAC_Stop(cfg->scope_dac, cfg->scope_dac_channel) != HAL_OK) {
@@ -292,17 +264,17 @@ ANALOG_HANDLER(acq_command) {
   }
   dac_trigger_enable(cfg->scope_dac, cfg->scope_dac_channel, true);
   if (HAL_DAC_Start_DMA(cfg->scope_dac, cfg->scope_dac_channel,
-                        (uint32_t *)dac_table, len,
+                        (uint32_t *)ctx->dac_table, len,
                         DAC_ALIGN_12B_R) != HAL_OK) {
     fatalError("DAC DMA start failed");
   }
 
   // ADC armed on the same trigger, then the timer starts both
-  ato_adc_start_dma(s_ctx.scope_adc, samples, 2 * n);
+  ato_adc_start_dma(ctx->scope_adc, ctx->samples, 2 * n);
   if (HAL_TIM_Base_Start(cfg->scope_tim) != HAL_OK) {
     fatalError("scope timer start failed");
   }
-  ato_adc_wait_dma(s_ctx.scope_adc,
+  ato_adc_wait_dma(ctx->scope_adc,
                    pdMS_TO_TICKS((uint64_t)n * 1000 / fs + SCOPE_TIMEOUT_MS));
 
   // back to idle: timer stopped, DAC static on the first level
@@ -311,11 +283,11 @@ ANALOG_HANDLER(acq_command) {
     fatalError("DAC DMA stop failed");
   }
   dac_trigger_enable(cfg->scope_dac, cfg->scope_dac_channel, false);
-  dac_set(cfg->scope_dac, cfg->scope_dac_channel, dac_table[0]);
+  dac_set(cfg->scope_dac, cfg->scope_dac_channel, ctx->dac_table[0]);
 
-  s_ctx.n = n;
-  uint64_t fs_mhz = s_ctx.fs_mhz, f_mhz = s_ctx.f_mhz;
-  xSemaphoreGive(s_ctx.lock);
+  ctx->n = n;
+  uint64_t fs_mhz = ctx->fs_mhz, f_mhz = ctx->f_mhz;
+  xSemaphoreGive(ctx->lock);
 
   ato_cli_core_printf(cli, "ok fs=%lu.%03lu f=%lu.%03lu n=%lu\r\n",
                       (unsigned long)(fs_mhz / 1000),
@@ -325,14 +297,15 @@ ANALOG_HANDLER(acq_command) {
 }
 
 ANALOG_HANDLER(dump_command) {
+  ato_analog_ctx_t *ctx = user_data;
   (void)args;
   (void)argc;
-  const ato_analog_config_t *cfg = s_ctx.cfg;
+  const ato_analog_config_t *cfg = ctx->cfg;
 
   // held during the whole output: the data cannot change meanwhile
-  xSemaphoreTake(s_ctx.lock, portMAX_DELAY);
-  if (s_ctx.n == 0) {
-    xSemaphoreGive(s_ctx.lock);
+  xSemaphoreTake(ctx->lock, portMAX_DELAY);
+  if (ctx->n == 0) {
+    xSemaphoreGive(ctx->lock);
     ato_cli_core_printf(cli, "error: no data, run acq first\r\n");
     return;
   }
@@ -340,46 +313,48 @@ ANALOG_HANDLER(dump_command) {
       cli,
       "#scope fs=%lu.%03lu n=%lu f=%lu.%03lu shape=%s vpp=%lu "
       "vref=%u full=%u in=%s out=%s\r\n",
-      (unsigned long)(s_ctx.fs_mhz / 1000),
-      (unsigned long)(s_ctx.fs_mhz % 1000), (unsigned long)s_ctx.n,
-      (unsigned long)(s_ctx.f_mhz / 1000), (unsigned long)(s_ctx.f_mhz % 1000),
-      shape_names[s_ctx.shape], (unsigned long)s_ctx.vpp_mv, VREF_MV,
-      FULL_SCALE, cfg->scope_in_label, cfg->scope_out_label);
-  for (uint32_t i = 0; i < s_ctx.n; i++) {
-    const uint16_t *p = &samples[2 * i];
+      (unsigned long)(ctx->fs_mhz / 1000), (unsigned long)(ctx->fs_mhz % 1000),
+      (unsigned long)ctx->n, (unsigned long)(ctx->f_mhz / 1000),
+      (unsigned long)(ctx->f_mhz % 1000), shape_names[ctx->shape],
+      (unsigned long)ctx->vpp_mv, VREF_MV, FULL_SCALE, cfg->scope_in_label,
+      cfg->scope_out_label);
+  for (uint32_t i = 0; i < ctx->n; i++) {
+    const uint16_t *p = &ctx->samples[2 * i];
     ato_cli_core_printf(cli, "%03X,%03X\r\n", p[0], p[1]);
   }
   ato_cli_core_puts(cli, "#end\r\n");
-  xSemaphoreGive(s_ctx.lock);
+  xSemaphoreGive(ctx->lock);
 }
 
 /* Setup -------------------------------------------------------------------- */
 
-void ato_analog_init(const ato_analog_config_t *cfg, ato_cli_ctx_t *cli) {
+void ato_analog_init(ato_analog_ctx_t *ctx, const ato_analog_config_t *cfg,
+                     ato_cli_ctx_t *cli) {
+  configASSERT(ctx != NULL);
   configASSERT(cfg != NULL);
-  configASSERT(s_ctx.cfg == NULL); // single instance
   configASSERT(cfg->scope_dac != NULL);
   configASSERT(cfg->scope_tim != NULL);
 
-  s_ctx.cfg = cfg;
+  memset(ctx, 0, sizeof(*ctx));
+  ctx->cfg = cfg;
   for (size_t i = 0; i < ATO_ANALOG_NB_ADC; i++) {
     if (cfg->adc[i] != NULL) {
-      ato_adc_init(&s_ctx.adc[i], cfg->adc[i]);
+      ato_adc_init(&ctx->adc[i], cfg->adc[i]);
       if (cfg->adc[i] == cfg->scope_adc) {
-        s_ctx.scope_adc = &s_ctx.adc[i];
+        ctx->scope_adc = &ctx->adc[i];
       }
     }
   }
-  configASSERT(s_ctx.scope_adc != NULL); // scope_adc must be listed in adc[]
+  configASSERT(ctx->scope_adc != NULL); // scope_adc must be listed in adc[]
 
-  s_ctx.lock = xSemaphoreCreateMutex();
-  if (s_ctx.lock == NULL) {
+  ctx->lock = xSemaphoreCreateMutex();
+  if (ctx->lock == NULL) {
     fatalError("analog: mutex allocation failed");
   }
 
   // default waveform
-  s_ctx.shape = SHAPE_STEP;
-  s_ctx.vpp_mv = 2000;
+  ctx->shape = SHAPE_STEP;
+  ctx->vpp_mv = 2000;
 
   // the scope DAC channel is only triggered during an acquisition; at rest
   // it is static, so that "dac" works on it
@@ -387,6 +362,6 @@ void ato_analog_init(const ato_analog_config_t *cfg, ato_cli_ctx_t *cli) {
   dac_set(cfg->scope_dac, cfg->scope_dac_channel, CENTER_RAW);
 
   for (size_t i = 0; i < COUNT_OF(analog_commands); i++) {
-    ato_cli_register_command(cli, &analog_commands[i], &s_ctx.cmd_items[i]);
+    ato_cli_register_command(cli, &analog_commands[i], &ctx->cmd_items[i], ctx);
   }
 }

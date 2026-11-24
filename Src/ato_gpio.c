@@ -73,8 +73,9 @@ static uint32_t get_available_pins(GPIO_TypeDef *addr) {
   }
 }
 
-static void gshow_command(ato_cli_core_t *cli, const ato_cli_arg_t *args,
-                          uint8_t argc) {
+static void gshow_command(ato_cli_core_t *cli, void *user_data,
+                          const ato_cli_arg_t *args, uint8_t argc) {
+  (void)user_data;
   (void)args;
   (void)argc;
   ato_cli_core_puts(cli, "GPIOx PIN MODE PUL LVL ALTERNATE_FUNC \r\n");
@@ -108,6 +109,6 @@ ATO_CLI_TABLE(gpio_commands, ATO_GPIO_COMMANDS);
 
 void ato_gpio_init(ato_gpio_ctx_t *ctx, ato_cli_ctx_t *cli) {
   for (size_t i = 0; i < COUNT_OF(gpio_commands); i++) {
-    ato_cli_register_command(cli, &gpio_commands[i], &ctx->cmd_items[i]);
+    ato_cli_register_command(cli, &gpio_commands[i], &ctx->cmd_items[i], ctx);
   }
 }
