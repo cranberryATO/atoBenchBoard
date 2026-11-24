@@ -27,5 +27,3 @@ The current project uses two UARTS (LPUART for printf() and USART 1 for the CLI)
 
 The project is based on a CMake project generated from CubeMX. It will compile and run on VSCode on Linux
 after installing the _STM32CubeIDE for Visual Studio Code_ extension.
-
-## Yocto

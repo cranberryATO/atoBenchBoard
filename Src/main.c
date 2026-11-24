@@ -102,6 +102,7 @@ int main(void)
   MX_ADC1_Init();
   MX_DAC1_Init();
   MX_TIM7_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
   printf("main()\r\n");
