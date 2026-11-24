@@ -16,7 +16,9 @@ import json
 
 import serial
 
-__all__ = ["Cli", "CliError"]
+__all__ = ["Cli", "CliError", "DEFAULT_BAUDRATE"]
+
+DEFAULT_BAUDRATE = 921600  # USART1 of the firmware (CubeMX)
 
 
 class CliError(RuntimeError):
@@ -31,18 +33,23 @@ class CliError(RuntimeError):
 class Cli:
     """Command / reply exchange with the CLI, in json mode."""
 
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 2.0):
+    def __init__(self, port: str, baudrate: int = DEFAULT_BAUDRATE,
+                 timeout: float = 2.0):
         self.ser = serial.Serial(port, baudrate, timeout=timeout)
         self.baudrate = baudrate
-        # flush a partially typed line and any pending output
-        self.ser.write(b"\r")
-        self.ser.reset_input_buffer()
-        # in plain mode until this command: skip its echo and the prompt
-        self.ser.write(b"mode json\r")
-        while True:
-            reply = self._parse(self._readline())
-            if reply is not None and reply.get("mode") == "json":
-                break
+        try:
+            # flush a partially typed line and any pending output
+            self.ser.write(b"\r")
+            self.ser.reset_input_buffer()
+            # in plain mode until this command: skip its echo and the prompt
+            self.ser.write(b"mode json\r")
+            while True:
+                reply = self._parse(self._readline())
+                if reply is not None and reply.get("mode") == "json":
+                    break
+        except BaseException:
+            self.ser.close()
+            raise
 
     def close(self) -> None:
         self.ser.close()

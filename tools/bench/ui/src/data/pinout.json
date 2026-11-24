@@ -1,0 +1,392 @@
+{
+  "generated_by": "tools/pinout/gen_pinout.py",
+  "source": "STM32G474R(B-C-E)Tx.xml",
+  "mcu": "STM32G474R(B-C-E)Tx",
+  "package": "LQFP64",
+  "pins": [
+    {
+      "position": 1,
+      "name": "VBAT",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 2,
+      "name": "PC13",
+      "type": "I/O",
+      "gpio": "PC13"
+    },
+    {
+      "position": 3,
+      "name": "PC14-OSC32_IN",
+      "type": "I/O",
+      "gpio": "PC14"
+    },
+    {
+      "position": 4,
+      "name": "PC15-OSC32_OUT",
+      "type": "I/O",
+      "gpio": "PC15"
+    },
+    {
+      "position": 5,
+      "name": "PF0-OSC_IN",
+      "type": "I/O",
+      "gpio": "PF0"
+    },
+    {
+      "position": 6,
+      "name": "PF1-OSC_OUT",
+      "type": "I/O",
+      "gpio": "PF1"
+    },
+    {
+      "position": 7,
+      "name": "PG10-NRST",
+      "type": "I/O",
+      "gpio": "PG10"
+    },
+    {
+      "position": 8,
+      "name": "PC0",
+      "type": "I/O",
+      "gpio": "PC0"
+    },
+    {
+      "position": 9,
+      "name": "PC1",
+      "type": "I/O",
+      "gpio": "PC1"
+    },
+    {
+      "position": 10,
+      "name": "PC2",
+      "type": "I/O",
+      "gpio": "PC2"
+    },
+    {
+      "position": 11,
+      "name": "PC3",
+      "type": "I/O",
+      "gpio": "PC3"
+    },
+    {
+      "position": 12,
+      "name": "PA0",
+      "type": "I/O",
+      "gpio": "PA0"
+    },
+    {
+      "position": 13,
+      "name": "PA1",
+      "type": "I/O",
+      "gpio": "PA1"
+    },
+    {
+      "position": 14,
+      "name": "PA2",
+      "type": "I/O",
+      "gpio": "PA2"
+    },
+    {
+      "position": 15,
+      "name": "VSS",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 16,
+      "name": "VDD",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 17,
+      "name": "PA3",
+      "type": "I/O",
+      "gpio": "PA3"
+    },
+    {
+      "position": 18,
+      "name": "PA4",
+      "type": "I/O",
+      "gpio": "PA4"
+    },
+    {
+      "position": 19,
+      "name": "PA5",
+      "type": "I/O",
+      "gpio": "PA5"
+    },
+    {
+      "position": 20,
+      "name": "PA6",
+      "type": "I/O",
+      "gpio": "PA6"
+    },
+    {
+      "position": 21,
+      "name": "PA7",
+      "type": "I/O",
+      "gpio": "PA7"
+    },
+    {
+      "position": 22,
+      "name": "PC4",
+      "type": "I/O",
+      "gpio": "PC4"
+    },
+    {
+      "position": 23,
+      "name": "PC5",
+      "type": "I/O",
+      "gpio": "PC5"
+    },
+    {
+      "position": 24,
+      "name": "PB0",
+      "type": "I/O",
+      "gpio": "PB0"
+    },
+    {
+      "position": 25,
+      "name": "PB1",
+      "type": "I/O",
+      "gpio": "PB1"
+    },
+    {
+      "position": 26,
+      "name": "PB2",
+      "type": "I/O",
+      "gpio": "PB2"
+    },
+    {
+      "position": 27,
+      "name": "VSSA",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 28,
+      "name": "VREF+",
+      "type": "MonoIO",
+      "gpio": null
+    },
+    {
+      "position": 29,
+      "name": "VDDA",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 30,
+      "name": "PB10",
+      "type": "I/O",
+      "gpio": "PB10"
+    },
+    {
+      "position": 31,
+      "name": "VSS",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 32,
+      "name": "VDD",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 33,
+      "name": "PB11",
+      "type": "I/O",
+      "gpio": "PB11"
+    },
+    {
+      "position": 34,
+      "name": "PB12",
+      "type": "I/O",
+      "gpio": "PB12"
+    },
+    {
+      "position": 35,
+      "name": "PB13",
+      "type": "I/O",
+      "gpio": "PB13"
+    },
+    {
+      "position": 36,
+      "name": "PB14",
+      "type": "I/O",
+      "gpio": "PB14"
+    },
+    {
+      "position": 37,
+      "name": "PB15",
+      "type": "I/O",
+      "gpio": "PB15"
+    },
+    {
+      "position": 38,
+      "name": "PC6",
+      "type": "I/O",
+      "gpio": "PC6"
+    },
+    {
+      "position": 39,
+      "name": "PC7",
+      "type": "I/O",
+      "gpio": "PC7"
+    },
+    {
+      "position": 40,
+      "name": "PC8",
+      "type": "I/O",
+      "gpio": "PC8"
+    },
+    {
+      "position": 41,
+      "name": "PC9",
+      "type": "I/O",
+      "gpio": "PC9"
+    },
+    {
+      "position": 42,
+      "name": "PA8",
+      "type": "I/O",
+      "gpio": "PA8"
+    },
+    {
+      "position": 43,
+      "name": "PA9",
+      "type": "I/O",
+      "gpio": "PA9"
+    },
+    {
+      "position": 44,
+      "name": "PA10",
+      "type": "I/O",
+      "gpio": "PA10"
+    },
+    {
+      "position": 45,
+      "name": "PA11",
+      "type": "I/O",
+      "gpio": "PA11"
+    },
+    {
+      "position": 46,
+      "name": "PA12",
+      "type": "I/O",
+      "gpio": "PA12"
+    },
+    {
+      "position": 47,
+      "name": "VSS",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 48,
+      "name": "VDD",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 49,
+      "name": "PA13",
+      "type": "I/O",
+      "gpio": "PA13"
+    },
+    {
+      "position": 50,
+      "name": "PA14",
+      "type": "I/O",
+      "gpio": "PA14"
+    },
+    {
+      "position": 51,
+      "name": "PA15",
+      "type": "I/O",
+      "gpio": "PA15"
+    },
+    {
+      "position": 52,
+      "name": "PC10",
+      "type": "I/O",
+      "gpio": "PC10"
+    },
+    {
+      "position": 53,
+      "name": "PC11",
+      "type": "I/O",
+      "gpio": "PC11"
+    },
+    {
+      "position": 54,
+      "name": "PC12",
+      "type": "I/O",
+      "gpio": "PC12"
+    },
+    {
+      "position": 55,
+      "name": "PD2",
+      "type": "I/O",
+      "gpio": "PD2"
+    },
+    {
+      "position": 56,
+      "name": "PB3",
+      "type": "I/O",
+      "gpio": "PB3"
+    },
+    {
+      "position": 57,
+      "name": "PB4",
+      "type": "I/O",
+      "gpio": "PB4"
+    },
+    {
+      "position": 58,
+      "name": "PB5",
+      "type": "I/O",
+      "gpio": "PB5"
+    },
+    {
+      "position": 59,
+      "name": "PB6",
+      "type": "I/O",
+      "gpio": "PB6"
+    },
+    {
+      "position": 60,
+      "name": "PB7",
+      "type": "I/O",
+      "gpio": "PB7"
+    },
+    {
+      "position": 61,
+      "name": "PB8-BOOT0",
+      "type": "I/O",
+      "gpio": "PB8"
+    },
+    {
+      "position": 62,
+      "name": "PB9",
+      "type": "I/O",
+      "gpio": "PB9"
+    },
+    {
+      "position": 63,
+      "name": "VSS",
+      "type": "Power",
+      "gpio": null
+    },
+    {
+      "position": 64,
+      "name": "VDD",
+      "type": "Power",
+      "gpio": null
+    }
+  ]
+}

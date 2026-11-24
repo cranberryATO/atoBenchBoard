@@ -1,0 +1,15 @@
+[project]
+name = "atobench-server"
+version = "0.1.0"
+description = "Web relay of the atoBenchBoard CLI: POST /api/cli, and the UI"
+requires-python = ">=3.11"
+dependencies = [
+    "atocli",
+    "fastapi[standard]>=0.115",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+atocli = { path = "../../atocli", editable = true }

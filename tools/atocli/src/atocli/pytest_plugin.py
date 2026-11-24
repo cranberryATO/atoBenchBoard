@@ -14,7 +14,7 @@ import os
 
 import pytest
 
-from atocli import Cli
+from atocli import DEFAULT_BAUDRATE, Cli
 
 
 def pytest_addoption(parser):
@@ -22,7 +22,7 @@ def pytest_addoption(parser):
     group.addoption("--port", default=os.environ.get("ATO_CLI_PORT"),
                     help="serial port of the CLI (USART1), "
                          "default: $ATO_CLI_PORT")
-    group.addoption("--baud", type=int, default=115200)
+    group.addoption("--baud", type=int, default=DEFAULT_BAUDRATE)
     group.addoption("--loopback", action="store_true",
                     help="run the tests marked loopback (scope wiring)")
 

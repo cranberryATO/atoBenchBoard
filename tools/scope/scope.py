@@ -21,7 +21,7 @@ import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
-from atocli import Cli
+from atocli import DEFAULT_BAUDRATE, Cli
 
 
 def dump(cli: Cli, n: int) -> tuple[dict, np.ndarray]:
@@ -56,7 +56,7 @@ def sine_fit(t: np.ndarray, v: np.ndarray, f: float) -> tuple[float, float]:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--port", required=True, help="CLI serial port")
-    p.add_argument("--baud", type=int, default=115200)
+    p.add_argument("--baud", type=int, default=DEFAULT_BAUDRATE)
     p.add_argument("--shape", choices=["step", "sine", "square"], default="step")
     p.add_argument("--freq", type=int, default=100, help="Hz (sine, square)")
     p.add_argument("--vpp", type=int, default=2000, help="mV peak to peak")

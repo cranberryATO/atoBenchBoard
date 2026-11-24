@@ -4,7 +4,7 @@ import pytest
 
 EXPECTED_COMMANDS = {
     "help", "mode", "ps", "so", "stats", "adc", "dac", "gen sine",
-    "gen square", "gen step", "acq", "dump", "gpio show", "pwm",
+    "gen square", "gen step", "acq", "dump", "gpio show", "gpio set", "pwm",
 }
 
 

@@ -3,7 +3,9 @@
 #include "ato_error.h"
 #include "ato_utils.h"
 
+#include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "ato_gpio.h"
 #include "ato_gpio_af.h"
@@ -137,6 +139,66 @@ static void gshow_command(ato_cli_core_t *cli, void *user_data,
     ato_cli_json_arr_end(cli);
     ato_cli_reply_end(cli);
   }
+}
+
+// "PA5" (or "pa5") -> port and pin number; false if not a pin of the package.
+static bool parse_pin(const char *name, const struct gpio_definition **gpio,
+                      uint32_t *pin) {
+  if (toupper((unsigned char)name[0]) != 'P') {
+    return false;
+  }
+  int port = toupper((unsigned char)name[1]) - 'A';
+  if (port < 0 || port >= (int)COUNT_OF(GPIO_ADDRESSES) ||
+      !isdigit((unsigned char)name[2])) {
+    return false;
+  }
+  char *end;
+  unsigned long n = strtoul(&name[2], &end, 10);
+  if (*end != '\0' || n > 15) {
+    return false;
+  }
+  *gpio = &GPIO_ADDRESSES[port];
+  *pin = n;
+  return (get_available_pins((*gpio)->addr) & (1U << n)) != 0;
+}
+
+static const ato_cli_param_t gset_params[] = {
+    ATO_CLI_STRING("pin", "pin name, e.g. PA5"),
+    ATO_CLI_INT("level", "output level", 0, 1),
+};
+
+// Only on a pin configured as output (CubeMX): the configuration of the
+// pins used by peripherals is never changed.
+static void gset_command(ato_cli_core_t *cli, void *user_data,
+                         const ato_cli_arg_t *args, uint8_t argc) {
+  (void)user_data;
+  (void)argc;
+  const struct gpio_definition *gpio;
+  uint32_t pin;
+  if (!parse_pin(args[0].s, &gpio, &pin)) {
+    ato_cli_reply_error(cli, "no pin '%s' in this package", args[0].s);
+    return;
+  }
+  if (!LL_AHB2_GRP1_IsEnabledClock(1U << gpio_port_idx(gpio->addr))) {
+    ato_cli_reply_error(cli, "%s: clock is not enabled", gpio->name);
+    return;
+  }
+  uint32_t bsr = 1U << pin;
+  if (LL_GPIO_GetPinMode(gpio->addr, bsr) != LL_GPIO_MODE_OUTPUT) {
+    ato_cli_reply_error(cli, "%s is not an output", args[0].s);
+    return;
+  }
+  if (args[1].i) {
+    LL_GPIO_SetOutputPin(gpio->addr, bsr);
+  } else {
+    LL_GPIO_ResetOutputPin(gpio->addr, bsr);
+  }
+  char name[5];
+  snprintf(name, sizeof(name), "P%c%lu", gpio->name[4], (unsigned long)pin);
+  ato_cli_reply_begin(cli);
+  ato_cli_reply_str(cli, "pin", name);
+  ato_cli_reply_uint(cli, "level", LL_GPIO_IsInputPinSet(gpio->addr, bsr));
+  ato_cli_reply_end(cli);
 }
 
 ATO_CLI_TABLE(gpio_commands, ATO_GPIO_COMMANDS);
