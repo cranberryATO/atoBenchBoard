@@ -25,19 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-// #include "adc.h"
-#include "ato_analog.h"
-#include "ato_cli.h"
-#include "ato_cli_test.h"
-#include "ato_error.h"
-#include "ato_gpio.h"
-#include "ato_tim.h"
-#include "ato_usb.h"
-#include "ato_usb_cdc.h"
-#include "dac.h"
-#include "tim.h"
-#include "usart.h"
-
+#include "ato_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -58,14 +46,11 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
-__weak extern ADC_HandleTypeDef hadc1, hadc2, hadc3, hadc4, hadc5;
-
 /* USER CODE END Variables */
 osThreadId defaultTaskHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-static void usb_echo_task(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
@@ -78,29 +63,10 @@ void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
 void vApplicationMallocFailedHook(void);
 
 /* USER CODE BEGIN 4 */
-__weak void vApplicationStackOverflowHook(xTaskHandle xTask,
-                                          signed char *pcTaskName) {
-  /* Run time stack overflow checking is performed if
-  configCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2. This hook function is
-  called if a stack overflow is detected. */
-  fatalError("Stack overflow in task %s", pcTaskName);
-}
 
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN 5 */
-__weak void vApplicationMallocFailedHook(void) {
-  /* vApplicationMallocFailedHook() will only be called if
-  configUSE_MALLOC_FAILED_HOOK is set to 1 in FreeRTOSConfig.h. It is a hook
-  function that will get called if a call to pvPortMalloc() fails.
-  pvPortMalloc() is called internally by the kernel whenever a task, queue,
-  timer or semaphore is created. It is also called by various parts of the
-  demo application. If heap_1.c or heap_2.c are used, then the size of the
-  heap available to pvPortMalloc() is defined by configTOTAL_HEAP_SIZE in
-  FreeRTOSConfig.h, and the xPortGetFreeHeapSize() API function can be used
-  to query the size of free heap space that remains (although it does not
-  provide information on how the remaining heap might be fragmented). */
-}
 /* USER CODE END 5 */
 
 /**
@@ -135,34 +101,7 @@ void MX_FREERTOS_Init(void) {
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
-
-  ato_usb_start();
-  // temporary: validation of the CDC, before the CLI is moved onto it
-  if (xTaskCreate(usb_echo_task, "USB echo", 256, ato_usb_cdc_get(0),
-                  tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
-    fatalError("Task creation failed for task USB echo");
-  }
-
-  ato_cli_ctx_t *cli1 = ato_cli_create_task(&huart1, "CLI1");
-  static const ato_analog_config_t analog_cfg = {
-      .adc = {&hadc1, &hadc2, &hadc3, &hadc4, &hadc5},
-      .dac = {&hdac1},
-      .scope_adc = &hadc1, // rank 1 = IN1 (PA0), rank 2 = IN5 (PB14)
-      .scope_dac = &hdac1, // OUT1 (PA4)
-      .scope_dac_channel = DAC_CHANNEL_1,
-      .scope_tim = &htim7,
-      .scope_in_label = "adc1.1",
-      .scope_out_label = "adc1.5",
-  };
-  static ato_analog_ctx_t analog_ctx; // ~24 KB: static, not on the stack
-  ato_analog_init(&analog_ctx, &analog_cfg, cli1);
-  static ato_gpio_ctx_t gpio_ctx;
-  ato_gpio_init(&gpio_ctx, cli1);
-  static ato_tim_ctx_t tim_ctx;
-  ato_tim_init(&tim_ctx, cli1);
-  static ato_cli_test_ctx_t cli_test_ctx;
-  ato_cli_test_init(&cli_test_ctx, cli1);
+  ato_app_start();
 
   /* USER CODE END RTOS_THREADS */
 }
@@ -185,14 +124,5 @@ void StartDefaultTask(void const *argument) {
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-
-// Temporary: sends back everything received on the CDC interface `argument`.
-static void usb_echo_task(void *argument) {
-  char buf[64];
-  for (;;) {
-    size_t n = ato_usb_cdc_read(argument, buf, sizeof(buf));
-    ato_usb_cdc_write(argument, buf, n);
-  }
-}
 
 /* USER CODE END Application */

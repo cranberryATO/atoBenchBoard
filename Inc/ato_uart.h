@@ -69,17 +69,19 @@ HAL_StatusTypeDef ato_uart_start_rx(ato_uart_t *u, TaskHandle_t notify_task);
  * @brief  Get the contiguous block of received bytes not yet consumed.
  * @retval Number of bytes available at `*data` (0: nothing to read).
  */
-uint32_t ato_uart_rx_peek(ato_uart_t *u, const uint8_t **data);
+size_t ato_uart_rx_peek(ato_uart_t *u, const uint8_t **data);
 
 /**
  * @brief  Release `n` bytes previously returned by ato_uart_rx_peek().
  */
-void ato_uart_rx_consume(ato_uart_t *u, uint32_t n);
+void ato_uart_rx_consume(ato_uart_t *u, size_t n);
 
+size_t ato_uart_read_with_notify(void *arg,  uint8_t *buf,
+                                   size_t buflen);
 /**
  * @brief  Queue bytes for transmission (non-blocking, drops on overflow).
  */
-void ato_uart_write(ato_uart_t *u, const uint8_t *data, uint16_t len);
+void ato_uart_write(ato_uart_t *u, const uint8_t *data, size_t len);
 
 /**
  * @brief  Queue a null-terminated string for transmission.
@@ -93,7 +95,7 @@ void ato_uart_write_string(ato_uart_t *u, const char *str);
  *         which may consume an RX notification; the caller must check for
  *         received data (ato_uart_rx_peek) before sleeping again.
  */
-void ato_uart_write_wait(ato_uart_t *u, const uint8_t *data, uint32_t len);
+void ato_uart_write_wait(void * arg, const uint8_t *data, size_t len);
 
 /**
  * @brief  Null-terminated string version of ato_uart_write_wait().

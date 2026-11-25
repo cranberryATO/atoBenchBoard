@@ -257,10 +257,10 @@ static void run_command(ato_cli_core_t *cli, const ato_cli_list_item_t *item,
 
 /*-----------------------------------------------------------*/
 
-void ato_cli_core_init(ato_cli_core_t *cli, ato_cli_write_fn write,
-                       void *write_arg) {
+void ato_cli_core_init(ato_cli_core_t *cli, ato_cli_read_fn read_fn,
+                       ato_cli_write_fn write_fn, void *io_arg) {
   configASSERT(cli != NULL);
-  configASSERT(write != NULL);
+  configASSERT(write_fn != NULL);
 
   cli->commands.def = &help_command_def;
   cli->commands.user_data = NULL;
@@ -269,8 +269,9 @@ void ato_cli_core_init(ato_cli_core_t *cli, ato_cli_write_fn write,
   cli->mode_item.user_data = NULL;
   cli->mode_item.next = NULL;
   cli->last = &cli->mode_item;
-  cli->write = write;
-  cli->write_arg = write_arg;
+  cli->write_fn = write_fn;
+  cli->read_fn = read_fn;
+  cli->io_arg = io_arg;
   cli->menu = NULL;
   cli->menu_len = 0;
   cli->mode = ATO_CLI_MODE_PLAIN;
@@ -404,7 +405,7 @@ void ato_cli_core_prompt(ato_cli_core_t *cli) {
 
 void ato_cli_core_write(ato_cli_core_t *cli, const char *data, size_t len) {
   if (len > 0) {
-    cli->write(cli->write_arg, data, len);
+    cli->write_fn(cli->io_arg, data, len);
   }
 }
 /*-----------------------------------------------------------*/

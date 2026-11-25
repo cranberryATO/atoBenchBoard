@@ -46,6 +46,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${CMAKE_SOURCE_DIR}/Src/ato_error.c
+    ${CMAKE_SOURCE_DIR}/Src/ato_app.c
     ${CMAKE_SOURCE_DIR}/Src/ato_cli.c
     ${CMAKE_SOURCE_DIR}/Src/ato_cli_core.c
     ${CMAKE_SOURCE_DIR}/Src/ato_cli_test.c

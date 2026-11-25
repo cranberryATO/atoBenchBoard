@@ -1,6 +1,6 @@
 #include "ato_tim.h"
 #include "ato_utils.h"
-#include "stm32g4xx_hal_tim.h"
+#include "main.h"
 #include "tim.h"
 
 static void pwminit_command(ato_cli_core_t *cli, void *user_data,

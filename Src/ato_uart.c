@@ -25,12 +25,18 @@ static inline uint32_t tx_mask(uint32_t x) {
 static ato_uart_t *s_by_periph[ATO_UART_NB_PERIPH];
 
 static int32_t periph_index(const USART_TypeDef *inst) {
-  if (inst == LPUART1) return 0;
-  if (inst == USART1) return 1;
-  if (inst == USART2) return 2;
-  if (inst == USART3) return 3;
-  if (inst == UART4) return 4;
-  if (inst == UART5) return 5;
+  if (inst == LPUART1)
+    return 0;
+  if (inst == USART1)
+    return 1;
+  if (inst == USART2)
+    return 2;
+  if (inst == USART3)
+    return 3;
+  if (inst == UART4)
+    return 4;
+  if (inst == UART5)
+    return 5;
   return -1;
 }
 
@@ -81,7 +87,7 @@ HAL_StatusTypeDef ato_uart_start_rx(ato_uart_t *u, TaskHandle_t notify_task) {
 
 /* RX ----------------------------------------------------------------------- */
 
-uint32_t ato_uart_rx_peek(ato_uart_t *u, const uint8_t **data) {
+size_t ato_uart_rx_peek(ato_uart_t *u, const uint8_t **data) {
   // Snapshot head and handle an RX restart atomically w.r.t. the UART/DMA
   // ISRs (priority >= configMAX_SYSCALL_INTERRUPT_PRIORITY, so masked).
   taskENTER_CRITICAL();
@@ -101,8 +107,21 @@ uint32_t ato_uart_rx_peek(ato_uart_t *u, const uint8_t **data) {
   return head < tail ? ATO_UART_RX_SIZE - tail : head - tail;
 }
 
-void ato_uart_rx_consume(ato_uart_t *u, uint32_t n) {
+void ato_uart_rx_consume(ato_uart_t *u, size_t n) {
   u->rx_tail = rx_mask(u->rx_tail + n);
+}
+
+size_t ato_uart_read_with_notify(void *arg, uint8_t *buf, size_t buflen) {
+  ato_uart_t *u = (ato_uart_t *)arg;
+  const uint8_t *data;
+  size_t n;
+  while ((n = ato_uart_rx_peek(u, &data)) == 0) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  }
+  size_t consumed = n > buflen ? buflen : n;
+  memcpy(buf, data, consumed);
+  ato_uart_rx_consume(u, consumed);
+  return consumed;
 }
 
 /* TX ----------------------------------------------------------------------- */
@@ -150,7 +169,7 @@ static uint32_t tx_push(ato_uart_t *u, const uint8_t *data, uint32_t len) {
   return n;
 }
 
-void ato_uart_write(ato_uart_t *u, const uint8_t *data, uint16_t len) {
+void ato_uart_write(ato_uart_t *u, const uint8_t *data, size_t len) {
   u->tx_dropped_bytes += len - tx_push(u, data, len);
   tx_kick(u);
 }
@@ -159,7 +178,8 @@ void ato_uart_write_string(ato_uart_t *u, const char *str) {
   ato_uart_write(u, (const uint8_t *)str, strlen(str));
 }
 
-void ato_uart_write_wait(ato_uart_t *u, const uint8_t *data, uint32_t len) {
+void ato_uart_write_wait(void *arg, const uint8_t *data, size_t len) {
+  ato_uart_t *u = arg;
   for (;;) {
     uint32_t n = tx_push(u, data, len);
     data += n;

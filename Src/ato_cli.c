@@ -3,135 +3,14 @@
 #include "FreeRTOS.h"
 #include "ato_cli_core.h"
 #include "ato_error.h"
-#include "ato_uart.h"
 #include "ato_utils.h"
 #include "task.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-#define CLI_CMD_SIZE 100    // max command line length, null included
 #define CLI_STACK_WORDS 512 // 2 KB: vsnprintf
 #define CLI_PRIORITY (tskIDLE_PRIORITY + 1)
-
-ATO_CLI_COMMAND_FUNCTION(ps_command);
-ATO_CLI_COMMAND_FUNCTION(so_command);
-ATO_CLI_COMMAND_FUNCTION(stats_command);
-
-static const ato_cli_command_t cli_commands[] = {
-    {"ps", "Show the FreeRTOS tasks", ps_command},
-    {"so", "Overflow the stack of this task (test)", so_command},
-    {"stats", "Show the UART error and drop counters", stats_command},
-};
-
-struct ato_cli_ctx {
-  ato_uart_t uart;    // byte stream
-  ato_cli_core_t cli; // command interpreter
-  ato_cli_list_item_t
-      cmd_items[COUNT_OF(cli_commands)]; // one per registered command
-
-  // line editor state
-  char cmd_buf[CLI_CMD_SIZE];
-  size_t cmd_idx;
-  uint8_t discard;      // line too long: ignore until end of line
-  uint8_t last_char_cr; // swallow the \n of a \r\n pair
-};
-
-/* CLI commands ------------------------------------------------------------- */
-
-static char task_state_char(eTaskState state) {
-  switch (state) {
-  case eRunning:
-    return 'X';
-  case eReady:
-    return 'R';
-  case eBlocked:
-    return 'B';
-  case eSuspended:
-    return 'S';
-  case eDeleted:
-    return 'D';
-  default:
-    return '?';
-  }
-}
-
-// plain: same columns as vTaskList(), which needs an unbounded output buffer.
-// json: {"tasks":[{"name":..,"state":"B","prio":..,"stack":..,"num":..}]}
-ATO_CLI_COMMAND_FUNCTION(ps_command) {
-  (void)user_data;
-  (void)args;
-  (void)argc;
-  // margin for tasks created between the count and the snapshot
-  UBaseType_t size = uxTaskGetNumberOfTasks() + 2;
-  TaskStatus_t *tasks = pvPortMalloc(size * sizeof(*tasks));
-  if (tasks == NULL) {
-    fatalError("ps: allocation failed");
-  }
-  UBaseType_t count = uxTaskGetSystemState(tasks, size, NULL);
-
-  if (ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON) {
-    ato_cli_reply_begin(cli);
-    ato_cli_json_arr_begin(cli, "tasks");
-    for (UBaseType_t i = 0; i < count; i++) {
-      const TaskStatus_t *t = &tasks[i];
-      char state[2] = {task_state_char(t->eCurrentState), '\0'};
-      ato_cli_json_obj_begin(cli, NULL);
-      ato_cli_reply_str(cli, "name", t->pcTaskName);
-      ato_cli_reply_str(cli, "state", state);
-      ato_cli_reply_uint(cli, "prio", t->uxCurrentPriority);
-      ato_cli_reply_uint(cli, "stack", t->usStackHighWaterMark);
-      ato_cli_reply_uint(cli, "num", t->xTaskNumber);
-      ato_cli_json_obj_end(cli);
-    }
-    ato_cli_json_arr_end(cli);
-    ato_cli_reply_end(cli);
-  } else {
-    ato_cli_core_printf(cli, "%-*s state prio stack num\r\n",
-                        configMAX_TASK_NAME_LEN, "name");
-    for (UBaseType_t i = 0; i < count; i++) {
-      const TaskStatus_t *t = &tasks[i];
-      ato_cli_core_printf(
-          cli, "%-*s   %c   %4lu %5u %3lu\r\n", configMAX_TASK_NAME_LEN,
-          t->pcTaskName, task_state_char(t->eCurrentState),
-          (unsigned long)t->uxCurrentPriority,
-          (unsigned)t->usStackHighWaterMark, (unsigned long)t->xTaskNumber);
-    }
-  }
-  vPortFree(tasks);
-}
-
-ATO_CLI_COMMAND_FUNCTION(so_command) {
-  (void)cli;
-  (void)user_data;
-  (void)args;
-  (void)argc;
-  volatile int onStack[512]; // 2 KB: the whole task stack
-  for (int i = 0; i < 512; i++) {
-    onStack[i] = 0xbaadfeed;
-  }
-  (void)onStack[0];
-}
-
-ATO_CLI_COMMAND_FUNCTION(stats_command) {
-  (void)args;
-  (void)argc;
-  const ato_cli_ctx_t *ctx = user_data;
-  const ato_uart_t *u = &ctx->uart;
-  ato_cli_reply_begin(cli);
-  ato_cli_reply_uint(cli, "tx_dropped_bytes", u->tx_dropped_bytes);
-  ato_cli_reply_uint(cli, "rx_errors", u->rx_errors);
-  ato_cli_reply_uint(cli, "tx_errors", u->tx_errors);
-  ato_cli_reply_uint(cli, "rx_restart_failures", u->rx_restart_failures);
-  ato_cli_reply_end(cli);
-}
-
-/* Output of the commands --------------------------------------------------- */
-
-// Blocking write: a command output can be larger than the TX buffer. Called
-// from the CLI task, which is the notify task of the UART (see cli_task).
-static void uart_write(void *arg, const char *data, size_t len) {
-  ato_uart_write_wait(arg, (const uint8_t *)data, len);
-}
 
 /* Line editor -------------------------------------------------------------- */
 
@@ -139,11 +18,13 @@ static void cli_run(ato_cli_ctx_t *ctx, char *command) {
   ato_cli_core_process(&ctx->cli, command);
 }
 
+static void write_string(ato_cli_ctx_t *ctx, const char *str) {
+  ctx->cli.write_fn(ctx->cli.io_arg, (uint8_t *)str, strlen(str));
+}
 // Line editor: echo, end of line (\r, \n or \r\n), backspace, overlong lines.
 // No echo in json mode (scripts).
 static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
                             uint32_t size) {
-  ato_uart_t *u = &ctx->uart;
 
   for (uint32_t i = 0; i < size; i++) {
     uint8_t c = bytes[i];
@@ -157,7 +38,7 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
         continue; // second half of \r\n, line already handled
       }
       if (echo) {
-        ato_uart_write_string(u, "\r\n");
+        write_string(ctx, "\r\n");
       }
       if (!ctx->discard && ctx->cmd_idx > 0) {
         ctx->cmd_buf[ctx->cmd_idx] = 0;
@@ -178,7 +59,7 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
       if (ctx->cmd_idx > 0) {
         ctx->cmd_idx--;
         if (echo) {
-          ato_uart_write_string(u, "\b \b"); // erase the character on screen
+          write_string(ctx, "\b \b"); // erase the character on screen
         }
       }
       continue;
@@ -190,7 +71,7 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
 
     if (ctx->cmd_idx >= sizeof(ctx->cmd_buf) - 1) {
       if (echo) {
-        ato_uart_write_string(u, "\r\n"); // the error after the echoed text
+        write_string(ctx, "\r\n"); // the error after the echoed text
       }
       ato_cli_reply_error(&ctx->cli, "command too long, line ignored");
       ctx->discard = 1;
@@ -199,7 +80,7 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
 
     ctx->cmd_buf[ctx->cmd_idx++] = (char)c;
     if (echo) {
-      ato_uart_write(u, &c, 1);
+      ctx->cli.write_fn(ctx->cli.io_arg, &c, 1);
     }
   }
   return size;
@@ -210,43 +91,24 @@ static uint32_t line_editor(ato_cli_ctx_t *ctx, const uint8_t *bytes,
 static void cli_task(void *argument) {
   ato_cli_ctx_t *ctx = argument;
 
-  if (ato_uart_start_rx(&ctx->uart, xTaskGetCurrentTaskHandle()) != HAL_OK) {
-    fatalError("%s: UART RX DMA start failed", pcTaskGetName(NULL));
-  }
   ato_cli_core_prompt(&ctx->cli);
   for (;;) {
-    const uint8_t *data;
-    uint32_t n = ato_uart_rx_peek(&ctx->uart, &data);
-    if (n == 0) {
-      // nothing to do: sleep until the RX ISR notifies us
-      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    } else {
-      ato_uart_rx_consume(&ctx->uart, line_editor(ctx, data, n));
-    }
+    uint32_t n = ctx->cli.read_fn(ctx->cli.io_arg, &ctx->rx_buf[0],
+                                  COUNT_OF(ctx->rx_buf));
+    line_editor(ctx, &ctx->rx_buf[0], n);
   }
   /* A task must never return; if it must end, call vTaskDelete(NULL). */
 }
 
-ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
-                                   const char *task_name) {
-  ato_cli_ctx_t *ctx = pvPortMalloc(sizeof(*ctx));
-  if (ctx == NULL) {
-    fatalError("Allocation of context failed for task %s", task_name);
-  }
-  memset(ctx, 0, sizeof(*ctx));
-
-  ato_uart_init(&ctx->uart, huart);
-  ato_cli_core_init(&ctx->cli, uart_write, &ctx->uart);
-  // list items live in the context: no extra allocation that could fail
-  for (size_t i = 0; i < COUNT_OF(cli_commands); i++) {
-    ato_cli_core_register(&ctx->cli, &cli_commands[i], &ctx->cmd_items[i], ctx);
-  }
+void ato_cli_create_task(ato_cli_ctx_t *ctx, const char *task_name,
+                         ato_cli_read_fn read_fn, ato_cli_write_fn write_fn,
+                         void *io_arg, TaskHandle_t *const pxCreatedTask) {
+  ato_cli_core_init(&ctx->cli, read_fn, write_fn, io_arg);
 
   if (xTaskCreate(cli_task, task_name, CLI_STACK_WORDS, ctx, CLI_PRIORITY,
-                  NULL) != pdPASS) {
+                  pxCreatedTask) != pdPASS) {
     fatalError("Task creation failed for task %s", task_name);
   }
-  return ctx;
 }
 
 void ato_cli_register_command(ato_cli_ctx_t *ctx, const ato_cli_command_t *def,
@@ -257,7 +119,8 @@ void ato_cli_register_command(ato_cli_ctx_t *ctx, const ato_cli_command_t *def,
 
 void ato_cli_register_command_table(ato_cli_ctx_t *ctx,
                                     const ato_cli_command_t *const commands,
-                                    int nb_commands, ato_cli_list_item_t *item,
+                                    size_t nb_commands,
+                                    ato_cli_list_item_t *item,
                                     void *user_data) {
   for (int i = 0; i < nb_commands; i++) {
     ato_cli_register_command(ctx, &commands[i], &item[i], user_data);

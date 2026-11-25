@@ -90,7 +90,9 @@ typedef enum {
   ATO_CLI_MODE_JSON,  // for scripts
 } ato_cli_mode_t;
 
-typedef void (*ato_cli_write_fn)(void *arg, const char *data, size_t len);
+typedef void (*ato_cli_write_fn)(void *arg, const uint8_t *data, size_t len);
+
+typedef size_t (*ato_cli_read_fn)(void * arg, uint8_t * buf, size_t buflen);
 
 /* Parameters --------------------------------------------------------------- */
 
@@ -218,8 +220,9 @@ typedef struct ato_cli_list_item {
 struct ato_cli_core {
   ato_cli_list_item_t commands;  // list head, always the "help" command
   ato_cli_list_item_t *last;     // list tail, for appending
-  ato_cli_write_fn write;        // output sink
-  void *write_arg;               // its argument (e.g. the UART instance)
+  ato_cli_read_fn read_fn;       // read bytes from the CLI interface
+  ato_cli_write_fn write_fn;     // write bytes on the CLI interface
+  void *io_arg;                  // argument of the interface (e.g. UART or USB CDC context)
   ato_cli_list_item_t mode_item; // the "mode" command
   const char *menu;              // current menu: the first `menu_len`
   size_t menu_len;               // chars of a command name; 0: root
@@ -237,8 +240,8 @@ struct ato_cli_core {
  * Initialise an interpreter: empty command list (except "help"), output
  * sent to `write(write_arg, ...)`, root menu.
  */
-void ato_cli_core_init(ato_cli_core_t *cli, ato_cli_write_fn write,
-                       void *write_arg);
+void ato_cli_core_init(ato_cli_core_t *cli, ato_cli_read_fn read_fn,
+                       ato_cli_write_fn write_fn, void *io_arg);
 
 /**
  * Register a command, using a caller-provided list item (no allocation).
