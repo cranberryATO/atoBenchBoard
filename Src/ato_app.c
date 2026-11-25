@@ -5,7 +5,6 @@
 
 #include "ato_analog.h"
 #include "ato_cli.h"
-#include "ato_cli_core.h"
 #include "ato_cli_test.h"
 #include "ato_error.h"
 #include "ato_gpio.h"
@@ -31,7 +30,7 @@ ATO_CLI_TABLE(cli_commands, APP_CLI_COMMANDS);
 typedef struct {
   ATO_CLI_ITEMS(APP_CLI_COMMANDS, cmd_items);
   ato_uart_t uart1_ctx;
-  ato_cli_ctx_t cli1_ctx;
+  ato_cli_t cli1_ctx;
   ato_analog_ctx_t analog_ctx;
   ato_gpio_ctx_t gpio_ctx;
   ato_tim_ctx_t tim_ctx;
@@ -78,7 +77,7 @@ void ato_app_start(void) {
 
   // Initialize the CLI and start receiving on the UART
   TaskHandle_t cliTaskHandle;
-  ato_cli_ctx_t *cli1 = &app_ctx.cli1_ctx;
+  ato_cli_t *cli1 = &app_ctx.cli1_ctx;
   ato_cli_create_task(cli1, "CLI1", ato_uart_read_with_notify,
                       ato_uart_write_wait, &app_ctx.uart1_ctx, &cliTaskHandle);
 
@@ -146,7 +145,7 @@ ATO_CLI_COMMAND_FUNCTION(ps_command) {
   }
   UBaseType_t count = uxTaskGetSystemState(tasks, size, NULL);
 
-  if (ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON) {
+  if (ato_cli_mode(cli) == ATO_CLI_MODE_JSON) {
     ato_cli_reply_begin(cli);
     ato_cli_json_arr_begin(cli, "tasks");
     for (UBaseType_t i = 0; i < count; i++) {
@@ -163,11 +162,11 @@ ATO_CLI_COMMAND_FUNCTION(ps_command) {
     ato_cli_json_arr_end(cli);
     ato_cli_reply_end(cli);
   } else {
-    ato_cli_core_printf(cli, "%-*s state prio stack num\r\n",
-                        configMAX_TASK_NAME_LEN, "name");
+    ato_cli_printf(cli, "%-*s state prio stack num\r\n",
+                   configMAX_TASK_NAME_LEN, "name");
     for (UBaseType_t i = 0; i < count; i++) {
       const TaskStatus_t *t = &tasks[i];
-      ato_cli_core_printf(
+      ato_cli_printf(
           cli, "%-*s   %c   %4lu %5u %3lu\r\n", configMAX_TASK_NAME_LEN,
           t->pcTaskName, task_state_char(t->eCurrentState),
           (unsigned long)t->uxCurrentPriority,
@@ -192,7 +191,7 @@ ATO_CLI_COMMAND_FUNCTION(so_command) {
 ATO_CLI_COMMAND_FUNCTION(stats_command) {
   (void)args;
   (void)argc; /*
-   const ato_cli_ctx_t *ctx = user_data;
+   const ato_cli_t *ctx = user_data;
    const ato_uart_t *u = &ctx->uart;
    ato_cli_reply_begin(cli);
    ato_cli_reply_uint(cli, "tx_dropped_bytes", u->tx_dropped_bytes);

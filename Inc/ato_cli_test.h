@@ -19,6 +19,6 @@ typedef struct {
 } ato_cli_test_ctx_t;
 
 void ato_cli_test_init(ato_cli_test_ctx_t *cli_test_ctx,
-                       ato_cli_ctx_t *cli_ctx);
+                       ato_cli_t *cli_ctx);
 
 #endif // ATO_CLI_TEST_H

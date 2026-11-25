@@ -1,5 +1,4 @@
 #include "ato_cli.h"
-#include "ato_cli_core.h"
 #include "ato_error.h"
 #include "ato_utils.h"
 
@@ -78,17 +77,17 @@ static uint32_t get_available_pins(GPIO_TypeDef *addr) {
 // plain: one line per pin.
 // json: {"ports":[{"port":"GPIOA","clock":true,"pins":[{"pin":0,"mode":"ANL",
 //        "pull":"NO","level":0,"af":"..."},...]},...]}
-static void gshow_command(ato_cli_core_t *cli, void *user_data,
+static void gshow_command(ato_cli_t *cli, void *user_data,
                           const ato_cli_arg_t *args, uint8_t argc) {
   (void)user_data;
   (void)args;
   (void)argc;
-  bool json = ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON;
+  bool json = ato_cli_mode(cli) == ATO_CLI_MODE_JSON;
   if (json) {
     ato_cli_reply_begin(cli);
     ato_cli_json_arr_begin(cli, "ports");
   } else {
-    ato_cli_core_puts(cli, "GPIOx PIN MODE PUL LVL ALTERNATE_FUNC \r\n");
+    ato_cli_puts(cli, "GPIOx PIN MODE PUL LVL ALTERNATE_FUNC \r\n");
   }
   for (int i = 0; i < COUNT_OF(GPIO_ADDRESSES); i++) {
     const struct gpio_definition *gpio = &GPIO_ADDRESSES[i];
@@ -99,7 +98,7 @@ static void gshow_command(ato_cli_core_t *cli, void *user_data,
       ato_cli_reply_bool(cli, "clock", clock);
       ato_cli_json_arr_begin(cli, "pins");
     } else if (!clock) {
-      ato_cli_core_printf(cli, "%s : clock is not enabled\r\n", gpio->name);
+      ato_cli_printf(cli, "%s : clock is not enabled\r\n", gpio->name);
     }
     if (clock) {
       uint32_t available_pins = get_available_pins(gpio->addr);
@@ -122,10 +121,10 @@ static void gshow_command(ato_cli_core_t *cli, void *user_data,
             ato_cli_reply_str(cli, "af", gpio_af_str(gpio->addr, pin, af));
             ato_cli_json_obj_end(cli);
           } else {
-            ato_cli_core_printf(cli, "%s %3d %4s %3s %3lx %s\r\n", gpio->name,
-                                pin, GPIO_MODE_STR[mode], GPIO_PULL[pull],
-                                (unsigned long)lvl,
-                                gpio_af_str(gpio->addr, pin, af));
+            ato_cli_printf(cli, "%s %3d %4s %3s %3lx %s\r\n", gpio->name, pin,
+                           GPIO_MODE_STR[mode], GPIO_PULL[pull],
+                           (unsigned long)lvl,
+                           gpio_af_str(gpio->addr, pin, af));
           }
         }
       }
@@ -169,7 +168,7 @@ static const ato_cli_param_t gset_params[] = {
 
 // Only on a pin configured as output (CubeMX): the configuration of the
 // pins used by peripherals is never changed.
-static void gset_command(ato_cli_core_t *cli, void *user_data,
+static void gset_command(ato_cli_t *cli, void *user_data,
                          const ato_cli_arg_t *args, uint8_t argc) {
   (void)user_data;
   (void)argc;
@@ -203,7 +202,7 @@ static void gset_command(ato_cli_core_t *cli, void *user_data,
 
 ATO_CLI_TABLE(gpio_commands, ATO_GPIO_COMMANDS);
 
-void ato_gpio_init(ato_gpio_ctx_t *ctx, ato_cli_ctx_t *cli) {
+void ato_gpio_init(ato_gpio_ctx_t *ctx, ato_cli_t *cli) {
   for (size_t i = 0; i < COUNT_OF(gpio_commands); i++) {
     ato_cli_register_command(cli, &gpio_commands[i], &ctx->cmd_items[i], ctx);
   }

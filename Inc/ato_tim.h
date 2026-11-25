@@ -11,6 +11,6 @@ typedef struct ato_tim_ctx {
 } ato_tim_ctx_t;
 
 
-void ato_tim_init(ato_tim_ctx_t *ctx, ato_cli_ctx_t *cli);
+void ato_tim_init(ato_tim_ctx_t *ctx, ato_cli_t *cli);
 
 #endif // ATO_TIM_H

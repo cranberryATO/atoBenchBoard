@@ -2,7 +2,7 @@
 
 The CLI is put in json mode: no echo, no prompt, and each command line gets
 exactly one JSON object, on one line, whose last member "ok" tells if the
-rest of the object is valid (see Inc/ato_cli_core.h):
+rest of the object is valid (see Inc/ato_cli.h):
 
     {"raw":1240,"mv":999,"ok":true}
     {"error":"<fs>: out of range 10..200000","ok":false}

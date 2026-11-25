@@ -2,7 +2,7 @@
 
 #include "FreeRTOS.h"
 #include "ato_adc.h"
-#include "ato_cli_core.h"
+#include "ato_cli.h"
 #include "ato_error.h"
 #include "ato_utils.h"
 #include "semphr.h"
@@ -26,18 +26,15 @@
 typedef enum { SHAPE_SINE, SHAPE_SQUARE, SHAPE_STEP } shape_t;
 static const char *const shape_names[] = {"sine", "square", "step"};
 
-#define ANALOG_HANDLER(fn)                                                     \
-  static void fn(ato_cli_core_t *cli, void *user_data,                         \
-                 const ato_cli_arg_t *args, uint8_t argc)
-ANALOG_HANDLER(adc_command);
-ANALOG_HANDLER(adc_list_command);
-ANALOG_HANDLER(dac_command);
-ANALOG_HANDLER(dac_list_command);
-ANALOG_HANDLER(gen_sine_command);
-ANALOG_HANDLER(gen_square_command);
-ANALOG_HANDLER(gen_step_command);
-ANALOG_HANDLER(acq_command);
-ANALOG_HANDLER(dump_command);
+ATO_CLI_COMMAND_FUNCTION(adc_command);
+ATO_CLI_COMMAND_FUNCTION(adc_list_command);
+ATO_CLI_COMMAND_FUNCTION(dac_command);
+ATO_CLI_COMMAND_FUNCTION(dac_list_command);
+ATO_CLI_COMMAND_FUNCTION(gen_sine_command);
+ATO_CLI_COMMAND_FUNCTION(gen_square_command);
+ATO_CLI_COMMAND_FUNCTION(gen_step_command);
+ATO_CLI_COMMAND_FUNCTION(acq_command);
+ATO_CLI_COMMAND_FUNCTION(dump_command);
 
 static const ato_cli_param_t adc_params[] = {
     ATO_CLI_INT("n", "ADC number", 1, ATO_ANALOG_NB_ADC),
@@ -124,7 +121,7 @@ static uint64_t tim_set_rate(TIM_HandleTypeDef *htim, uint32_t fs) {
 
 /* Unit commands ------------------------------------------------------------ */
 
-ANALOG_HANDLER(adc_command) {
+ATO_CLI_COMMAND_FUNCTION(adc_command) {
   ato_analog_ctx_t *ctx = user_data;
   (void)argc;
   uint32_t n = args[0].i, ch = args[1].i;
@@ -154,11 +151,11 @@ ANALOG_HANDLER(adc_command) {
 
 // plain: one line per ADC, "ADC3 software IN1"
 // json: {"adcs":[{"adc":3,"trigger":"software","channels":[1]},...]}
-ANALOG_HANDLER(adc_list_command) {
+ATO_CLI_COMMAND_FUNCTION(adc_list_command) {
   ato_analog_ctx_t *ctx = user_data;
   (void)args;
   (void)argc;
-  bool json = ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON;
+  bool json = ato_cli_mode(cli) == ATO_CLI_MODE_JSON;
   if (json) {
     ato_cli_reply_begin(cli);
     ato_cli_json_arr_begin(cli, "adcs");
@@ -177,14 +174,14 @@ ANALOG_HANDLER(adc_list_command) {
       ato_cli_reply_str(cli, "trigger", trigger);
       ato_cli_json_arr_begin(cli, "channels");
     } else {
-      ato_cli_core_printf(cli, "ADC%lu %-8s", (unsigned long)(i + 1), trigger);
+      ato_cli_printf(cli, "ADC%lu %-8s", (unsigned long)(i + 1), trigger);
     }
     for (uint32_t ch = 0; ch < 32; ch++) {
       if (channels & (1UL << ch)) {
         if (json) {
           ato_cli_reply_uint(cli, NULL, ch);
         } else {
-          ato_cli_core_printf(cli, " IN%lu", (unsigned long)ch);
+          ato_cli_printf(cli, " IN%lu", (unsigned long)ch);
         }
       }
     }
@@ -192,7 +189,7 @@ ANALOG_HANDLER(adc_list_command) {
       ato_cli_json_arr_end(cli);
       ato_cli_json_obj_end(cli);
     } else {
-      ato_cli_core_puts(cli, "\r\n");
+      ato_cli_puts(cli, "\r\n");
     }
   }
   if (json) {
@@ -207,13 +204,13 @@ ANALOG_HANDLER(adc_list_command) {
 // its pin is in analog mode.
 // plain: one line per channel, "DAC1 OUT1 on raw=1240 mv=999"
 // json: {"outputs":[{"dac":1,"ch":1,"enabled":true,"raw":1240,"mv":999},...]}
-ANALOG_HANDLER(dac_list_command) {
+ATO_CLI_COMMAND_FUNCTION(dac_list_command) {
   ato_analog_ctx_t *ctx = user_data;
   (void)args;
   (void)argc;
   static const uint32_t channels[] = {DAC_CHANNEL_1, DAC_CHANNEL_2};
   static const uint32_t enable[] = {DAC_CR_EN1, DAC_CR_EN2};
-  bool json = ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON;
+  bool json = ato_cli_mode(cli) == ATO_CLI_MODE_JSON;
   if (json) {
     ato_cli_reply_begin(cli);
     ato_cli_json_arr_begin(cli, "outputs");
@@ -235,10 +232,10 @@ ANALOG_HANDLER(dac_list_command) {
         ato_cli_reply_uint(cli, "mv", raw_to_mv(raw));
         ato_cli_json_obj_end(cli);
       } else {
-        ato_cli_core_printf(cli, "DAC%lu OUT%lu %-3s raw=%lu mv=%lu\r\n",
-                            (unsigned long)(i + 1), (unsigned long)(c + 1),
-                            enabled ? "on" : "off", (unsigned long)raw,
-                            (unsigned long)raw_to_mv(raw));
+        ato_cli_printf(cli, "DAC%lu OUT%lu %-3s raw=%lu mv=%lu\r\n",
+                       (unsigned long)(i + 1), (unsigned long)(c + 1),
+                       enabled ? "on" : "off", (unsigned long)raw,
+                       (unsigned long)raw_to_mv(raw));
       }
     }
   }
@@ -248,7 +245,7 @@ ANALOG_HANDLER(dac_list_command) {
   }
 }
 
-ANALOG_HANDLER(dac_command) {
+ATO_CLI_COMMAND_FUNCTION(dac_command) {
   ato_analog_ctx_t *ctx = user_data;
   (void)argc;
   uint32_t n = args[0].i, mv = args[2].i;
@@ -272,7 +269,7 @@ ANALOG_HANDLER(dac_command) {
 
 /* Scope commands ----------------------------------------------------------- */
 
-static void gen_set(ato_cli_core_t *cli, ato_analog_ctx_t *ctx, shape_t shape,
+static void gen_set(ato_cli_t *cli, ato_analog_ctx_t *ctx, shape_t shape,
                     uint32_t freq, uint32_t vpp) {
   xSemaphoreTake(ctx->lock, portMAX_DELAY);
   ctx->shape = shape;
@@ -287,19 +284,19 @@ static void gen_set(ato_cli_core_t *cli, ato_analog_ctx_t *ctx, shape_t shape,
   ato_cli_reply_end(cli);
 }
 
-ANALOG_HANDLER(gen_sine_command) {
+ATO_CLI_COMMAND_FUNCTION(gen_sine_command) {
   ato_analog_ctx_t *ctx = user_data;
   (void)argc;
   gen_set(cli, ctx, SHAPE_SINE, args[0].i, args[1].i);
 }
 
-ANALOG_HANDLER(gen_square_command) {
+ATO_CLI_COMMAND_FUNCTION(gen_square_command) {
   ato_analog_ctx_t *ctx = user_data;
   (void)argc;
   gen_set(cli, ctx, SHAPE_SQUARE, args[0].i, args[1].i);
 }
 
-ANALOG_HANDLER(gen_step_command) {
+ATO_CLI_COMMAND_FUNCTION(gen_step_command) {
   ato_analog_ctx_t *ctx = user_data;
   (void)argc;
   gen_set(cli, ctx, SHAPE_STEP, 0, args[0].i);
@@ -336,7 +333,7 @@ static uint32_t build_table(ato_analog_ctx_t *ctx, uint32_t fs, uint32_t n) {
   return len;
 }
 
-ANALOG_HANDLER(acq_command) {
+ATO_CLI_COMMAND_FUNCTION(acq_command) {
   ato_analog_ctx_t *ctx = user_data;
   (void)argc;
   const ato_analog_config_t *cfg = ctx->cfg;
@@ -398,7 +395,7 @@ ANALOG_HANDLER(acq_command) {
   ato_cli_reply_end(cli);
 }
 
-ANALOG_HANDLER(dump_command) {
+ATO_CLI_COMMAND_FUNCTION(dump_command) {
   ato_analog_ctx_t *ctx = user_data;
   (void)args;
   (void)argc;
@@ -412,7 +409,7 @@ ANALOG_HANDLER(dump_command) {
     return;
   }
 
-  if (ato_cli_core_mode(cli) == ATO_CLI_MODE_JSON) {
+  if (ato_cli_mode(cli) == ATO_CLI_MODE_JSON) {
     // {"fs":..,"n":..,...,"in":[...],"out":[...],"ok":true}
     ato_cli_reply_begin(cli);
     ato_cli_reply_milli(cli, "fs", ctx->fs_mhz);
@@ -436,27 +433,27 @@ ANALOG_HANDLER(dump_command) {
     return;
   }
 
-  ato_cli_core_printf(
-      cli,
-      "#scope fs=%lu.%03lu n=%lu f=%lu.%03lu shape=%s vpp=%lu "
-      "vref=%u full=%u in=%s out=%s\r\n",
-      (unsigned long)(ctx->fs_mhz / 1000), (unsigned long)(ctx->fs_mhz % 1000),
-      (unsigned long)ctx->n, (unsigned long)(ctx->f_mhz / 1000),
-      (unsigned long)(ctx->f_mhz % 1000), shape_names[ctx->shape],
-      (unsigned long)ctx->vpp_mv, VREF_MV, FULL_SCALE, cfg->scope_in_label,
-      cfg->scope_out_label);
+  ato_cli_printf(cli,
+                 "#scope fs=%lu.%03lu n=%lu f=%lu.%03lu shape=%s vpp=%lu "
+                 "vref=%u full=%u in=%s out=%s\r\n",
+                 (unsigned long)(ctx->fs_mhz / 1000),
+                 (unsigned long)(ctx->fs_mhz % 1000), (unsigned long)ctx->n,
+                 (unsigned long)(ctx->f_mhz / 1000),
+                 (unsigned long)(ctx->f_mhz % 1000), shape_names[ctx->shape],
+                 (unsigned long)ctx->vpp_mv, VREF_MV, FULL_SCALE,
+                 cfg->scope_in_label, cfg->scope_out_label);
   for (uint32_t i = 0; i < ctx->n; i++) {
     const uint16_t *p = &ctx->samples[2 * i];
-    ato_cli_core_printf(cli, "%03X,%03X\r\n", p[0], p[1]);
+    ato_cli_printf(cli, "%03X,%03X\r\n", p[0], p[1]);
   }
-  ato_cli_core_puts(cli, "#end\r\n");
+  ato_cli_puts(cli, "#end\r\n");
   xSemaphoreGive(ctx->lock);
 }
 
 /* Setup -------------------------------------------------------------------- */
 
 void ato_analog_init(ato_analog_ctx_t *ctx, const ato_analog_config_t *cfg,
-                     ato_cli_ctx_t *cli) {
+                     ato_cli_t *cli) {
   configASSERT(ctx != NULL);
   configASSERT(cfg != NULL);
   configASSERT(cfg->scope_dac != NULL);

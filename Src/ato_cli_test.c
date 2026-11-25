@@ -1,5 +1,4 @@
 #include "ato_cli.h"
-#include "ato_cli_core.h"
 
 #include "ato_cli_test.h"
 
@@ -22,7 +21,7 @@ static const ato_cli_param_t cli_test_1_params[] = {
 ATO_CLI_TABLE(cli_commands, ATO_CLI_TEST_COMMANDS);
 
 void ato_cli_test_init(ato_cli_test_ctx_t *cli_test_ctx,
-                       ato_cli_ctx_t *cli_ctx) {
+                       ato_cli_t *cli_ctx) {
   ATO_CLI_REGISTER_TABLE(cli_ctx, cli_commands, cli_test_ctx->cmd_items,
                          cli_test_ctx);
 }
@@ -51,15 +50,15 @@ ATO_CLI_COMMAND_FUNCTION(cli_test_1_command) {
 }
 
 ATO_CLI_COMMAND_FUNCTION(cli_test_printf_command) {
-  ato_cli_core_printf(cli, "n=%ld, e=%d, s=%s", args[0].i, args[1].e,
+  ato_cli_printf(cli, "n=%ld, e=%d, s=%s", args[0].i, args[1].e,
                       args[2].s);
   if (argc >= 4)
-    ato_cli_core_printf(cli, ", no=%ld", args[3].i);
+    ato_cli_printf(cli, ", no=%ld", args[3].i);
   if (argc >= 5)
-    ato_cli_core_printf(cli, ", eo=%d", args[4].e);
+    ato_cli_printf(cli, ", eo=%d", args[4].e);
   if (argc >= 6)
-    ato_cli_core_printf(cli, ", so=%s", args[5].s);
-  ato_cli_core_printf(cli, "\r\n");
+    ato_cli_printf(cli, ", so=%s", args[5].s);
+  ato_cli_printf(cli, "\r\n");
 }
 
 ATO_CLI_COMMAND_FUNCTION(cli_test_info_command) {}

@@ -13,6 +13,6 @@ typedef struct ato_gpio_ctx {
 } ato_gpio_ctx_t;
 
 
-void ato_gpio_init(ato_gpio_ctx_t *ctx, ato_cli_ctx_t *cli);
+void ato_gpio_init(ato_gpio_ctx_t *ctx, ato_cli_t *cli);
 
 #endif // ATO_GPIO_H

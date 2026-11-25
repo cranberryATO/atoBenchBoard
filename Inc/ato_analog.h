@@ -8,7 +8,7 @@
  * same timer.
  *
  * Commands (replies "ok ..." / "error: ..." in plain mode, one JSON object
- * in json mode, see ato_cli_core.h):
+ * in json mode, see ato_cli.h):
  *   adc <n> <ch>               read ADCn channel ch (software-triggered ADC)
  *   dac <n> <ch> <mV>          set DACn channel ch
  *   gen sine <Hz> <mVpp>, gen square <Hz> <mVpp>, gen step <mVpp>
@@ -107,6 +107,6 @@ typedef struct ato_analog_ctx {
  *         stay valid (typically static and static const).
  */
 void ato_analog_init(ato_analog_ctx_t *ctx, const ato_analog_config_t *cfg,
-                     ato_cli_ctx_t *cli);
+                     ato_cli_t *cli);
 
 #endif /* ATO_ANALOG_H */
