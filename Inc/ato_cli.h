@@ -33,4 +33,10 @@ ato_cli_ctx_t *ato_cli_create_task(UART_HandleTypeDef *huart,
 void ato_cli_register_command(ato_cli_ctx_t *ctx, const ato_cli_command_t *def,
                               ato_cli_list_item_t *item, void *user_data);
 
+void ato_cli_register_command_table(ato_cli_ctx_t *ctx, int nb_commands,
+                                    const ato_cli_command_t *const commands,
+                                    ato_cli_list_item_t *item,
+                                    void *user_data);
+
+
 #endif /* ATO_CLI_H */

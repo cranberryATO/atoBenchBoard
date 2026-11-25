@@ -9,7 +9,7 @@
     gset_params)
 
 typedef struct ato_gpio_ctx {
-  ATO_CLI_ITEMS(ATO_GPIO_COMMANDS);
+  ATO_CLI_ITEMS(ATO_GPIO_COMMANDS, cmd_items);
 } ato_gpio_ctx_t;
 
 

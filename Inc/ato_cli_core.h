@@ -78,6 +78,11 @@
 #define ATO_CLI_MAX_WORDS 10 // words per line, command name included
 #endif
 
+#define ATO_CLI_COMMAND_FUNCTION(fn)                                               \
+  static void fn(ato_cli_core_t *cli, void *user_data,                         \
+                 const ato_cli_arg_t *args, uint8_t argc)
+
+
 typedef struct ato_cli_core ato_cli_core_t;
 
 typedef enum {
@@ -85,10 +90,6 @@ typedef enum {
   ATO_CLI_MODE_JSON,  // for scripts
 } ato_cli_mode_t;
 
-/**
- * Output sink, provided by the transport. Must write all `len` bytes,
- * blocking if needed (back-pressure); it has no error to report.
- */
 typedef void (*ato_cli_write_fn)(void *arg, const char *data, size_t len);
 
 /* Parameters --------------------------------------------------------------- */
@@ -99,7 +100,6 @@ typedef enum {
   ATO_CLI_PARAM_STRING, // any word
 } ato_cli_param_type_t;
 
-/** Description of a command parameter, meant to be a const global. */
 typedef struct {
   const char *name; // short, shown in the usage: "<name>"
   const char *help; // one line, shown by "help <command>"
@@ -124,6 +124,14 @@ typedef struct {
       (max_)                                                                   \
     }                                                                          \
   }
+#define ATO_CLI_INT_OPTIONAL(name_, help_, min_, max_)                         \
+  {                                                                            \
+    .name = (name_), .help = (help_), .type = ATO_CLI_PARAM_INT, .i = {        \
+      (min_),                                                                  \
+      (max_)                                                                   \
+    },                                                                         \
+    .optional=true                                                             \
+  }
 // `values_`: a `static const char *const []` array.
 #define ATO_CLI_ENUM(name_, help_, values_)                                    \
   {                                                                            \
@@ -132,8 +140,20 @@ typedef struct {
       (values_)                                                                \
     }                                                                          \
   }
+#define ATO_CLI_ENUM_OPTIONAL(name_, help_, values_)                           \
+  {                                                                            \
+    .name = (name_), .help = (help_), .type = ATO_CLI_PARAM_ENUM, .e = {       \
+      COUNT_OF(values_),                                                       \
+      (values_)                                                                \
+    },                                                                         \
+    .optional=true                                                             \
+  }
 #define ATO_CLI_STRING(name_, help_)                                           \
   {.name = (name_), .help = (help_), .type = ATO_CLI_PARAM_STRING}
+#define ATO_CLI_STRING_OPTIONAL(name_, help_)                                  \
+  {.name = (name_), .help = (help_),                                           \
+    .type = ATO_CLI_PARAM_STRING, .optional=true                               \
+  }
 // For an optional parameter, write the initializer with `.optional = true`.
 
 /** Value of a parameter, converted according to its type. */
@@ -160,21 +180,23 @@ typedef void (*ato_cli_command_fn)(ato_cli_core_t *cli, void *user_data,
 /** Command descriptor, meant to be a const global. */
 typedef struct {
   const char *command; // lower case words separated by one space, "gpio show"
-  const char *help;    // one line, without "\r\n"
+  const char *help;    // one line, no "\r" or "\n"
   ato_cli_command_fn handler;
   const ato_cli_param_t *params; // NULL if none
   uint8_t nb_params;
 } ato_cli_command_t;
 
-// X-macro helpers: X(name, help, handler) or X(name, help, handler, params),
+// These macros help define the list of commands
+// For an example of how to use them look at ato_cli_test.h and ato_cli_test.c
+// X(name, help, handler) or X(name, help, handler, params),
 // `params` being a `static const ato_cli_param_t []` array.
 #define ATO_CLI_X_COUNT(...) +1
 #define ATO_CLI_X_DEF(name, help, handler, ...)                                \
   {(name), (help), (handler)__VA_OPT__(, (__VA_ARGS__), COUNT_OF(__VA_ARGS__))},
 
 // Context member declaration (use in the .h in the context struct)
-#define ATO_CLI_ITEMS(list)                                                    \
-  ato_cli_list_item_t cmd_items[0 list(ATO_CLI_X_COUNT)]
+#define ATO_CLI_ITEMS(list, name)                                              \
+  ato_cli_list_item_t name[0 list(ATO_CLI_X_COUNT)]
 // Command table definition (use in the .c, after the parameter tables)
 #define ATO_CLI_TABLE(table, list)                                             \
   static const ato_cli_command_t table[] = {list(ATO_CLI_X_DEF)}

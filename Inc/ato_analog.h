@@ -98,7 +98,7 @@ typedef struct ato_analog_ctx {
   uint16_t dac_table[ATO_ANALOG_SCOPE_MAX_POINTS];
   uint16_t samples[2 * ATO_ANALOG_SCOPE_MAX_POINTS]; // in, out interleaved
 
-  ATO_CLI_ITEMS(ATO_ANALOG_COMMANDS);
+  ATO_CLI_ITEMS(ATO_ANALOG_COMMANDS, cmd_items);
 } ato_analog_ctx_t;
 
 /**

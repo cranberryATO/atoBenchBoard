@@ -13,12 +13,9 @@
 #define CLI_STACK_WORDS 512 // 2 KB: vsnprintf
 #define CLI_PRIORITY (tskIDLE_PRIORITY + 1)
 
-static void ps_command(ato_cli_core_t *cli, void *user_data,
-                       const ato_cli_arg_t *args, uint8_t argc);
-static void so_command(ato_cli_core_t *cli, void *user_data,
-                       const ato_cli_arg_t *args, uint8_t argc);
-static void stats_command(ato_cli_core_t *cli, void *user_data,
-                          const ato_cli_arg_t *args, uint8_t argc);
+ATO_CLI_COMMAND_FUNCTION(ps_command);
+ATO_CLI_COMMAND_FUNCTION(so_command);
+ATO_CLI_COMMAND_FUNCTION(stats_command);
 
 static const ato_cli_command_t cli_commands[] = {
     {"ps", "Show the FreeRTOS tasks", ps_command},
@@ -60,8 +57,7 @@ static char task_state_char(eTaskState state) {
 
 // plain: same columns as vTaskList(), which needs an unbounded output buffer.
 // json: {"tasks":[{"name":..,"state":"B","prio":..,"stack":..,"num":..}]}
-static void ps_command(ato_cli_core_t *cli, void *user_data,
-                       const ato_cli_arg_t *args, uint8_t argc) {
+ATO_CLI_COMMAND_FUNCTION(ps_command) {
   (void)user_data;
   (void)args;
   (void)argc;
@@ -104,8 +100,7 @@ static void ps_command(ato_cli_core_t *cli, void *user_data,
   vPortFree(tasks);
 }
 
-static void so_command(ato_cli_core_t *cli, void *user_data,
-                       const ato_cli_arg_t *args, uint8_t argc) {
+ATO_CLI_COMMAND_FUNCTION(so_command) {
   (void)cli;
   (void)user_data;
   (void)args;
@@ -117,8 +112,7 @@ static void so_command(ato_cli_core_t *cli, void *user_data,
   (void)onStack[0];
 }
 
-static void stats_command(ato_cli_core_t *cli, void *user_data,
-                          const ato_cli_arg_t *args, uint8_t argc) {
+ATO_CLI_COMMAND_FUNCTION(stats_command) {
   (void)args;
   (void)argc;
   const ato_cli_ctx_t *ctx = user_data;
@@ -259,4 +253,13 @@ void ato_cli_register_command(ato_cli_ctx_t *ctx, const ato_cli_command_t *def,
                               ato_cli_list_item_t *item, void *user_data) {
   configASSERT(ctx != NULL);
   ato_cli_core_register(&ctx->cli, def, item, user_data);
+}
+
+void ato_cli_register_command_table(ato_cli_ctx_t *ctx, int nb_commands,
+                                    const ato_cli_command_t *const commands,
+                                    ato_cli_list_item_t *item,
+                                    void *user_data) {
+  for (int i = 0; i < nb_commands; i++) {
+    ato_cli_register_command(ctx, &commands[i], &item[i], user_data);
+  }
 }
