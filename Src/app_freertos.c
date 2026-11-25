@@ -19,15 +19,16 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "FreeRTOS.h"
-#include "task.h"
-#include "main.h"
 #include "cmsis_os.h"
+#include "main.h"
+#include "task.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 // #include "adc.h"
 #include "ato_analog.h"
 #include "ato_cli.h"
+#include "ato_cli_test.h"
 #include "ato_error.h"
 #include "ato_gpio.h"
 #include "ato_tim.h"
@@ -68,7 +69,7 @@ static void usb_echo_task(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
-void StartDefaultTask(void const * argument);
+void StartDefaultTask(void const *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -103,10 +104,10 @@ __weak void vApplicationMallocFailedHook(void) {
 /* USER CODE END 5 */
 
 /**
-  * @brief  FreeRTOS initialization
-  * @param  None
-  * @retval None
-  */
+ * @brief  FreeRTOS initialization
+ * @param  None
+ * @retval None
+ */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
 
@@ -135,6 +136,14 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+
+  ato_usb_start();
+  // temporary: validation of the CDC, before the CLI is moved onto it
+  if (xTaskCreate(usb_echo_task, "USB echo", 256, ato_usb_cdc_get(0),
+                  tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+    fatalError("Task creation failed for task USB echo");
+  }
+
   ato_cli_ctx_t *cli1 = ato_cli_create_task(&huart1, "CLI1");
   static const ato_analog_config_t analog_cfg = {
       .adc = {&hadc1, &hadc2, &hadc3, &hadc4, &hadc5},
@@ -152,15 +161,10 @@ void MX_FREERTOS_Init(void) {
   ato_gpio_init(&gpio_ctx, cli1);
   static ato_tim_ctx_t tim_ctx;
   ato_tim_init(&tim_ctx, cli1);
+  static ato_cli_test_ctx_t cli_test_ctx;
+  ato_cli_test_init(&cli_test_ctx, cli1);
 
-  ato_usb_start();
-  // temporary: validation of the CDC, before the CLI is moved onto it
-  if (xTaskCreate(usb_echo_task, "USB echo", 256, ato_usb_cdc_get(0),
-                  tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
-    fatalError("Task creation failed for task USB echo");
-  }
   /* USER CODE END RTOS_THREADS */
-
 }
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -170,8 +174,7 @@ void MX_FREERTOS_Init(void) {
  * @retval None
  */
 /* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
-{
+void StartDefaultTask(void const *argument) {
   /* USER CODE BEGIN StartDefaultTask */
   /* Infinite loop */
   for (;;) {
@@ -193,4 +196,3 @@ static void usb_echo_task(void *argument) {
 }
 
 /* USER CODE END Application */
-

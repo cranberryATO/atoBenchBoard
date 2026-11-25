@@ -48,6 +48,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/Src/ato_error.c
     ${CMAKE_SOURCE_DIR}/Src/ato_cli.c
     ${CMAKE_SOURCE_DIR}/Src/ato_cli_core.c
+    ${CMAKE_SOURCE_DIR}/Src/ato_cli_test.c
     ${CMAKE_SOURCE_DIR}/Src/ato_uart.c
     ${CMAKE_SOURCE_DIR}/Src/ato_adc.c
     ${CMAKE_SOURCE_DIR}/Src/ato_analog.c
