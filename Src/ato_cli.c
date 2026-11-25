@@ -255,9 +255,9 @@ void ato_cli_register_command(ato_cli_ctx_t *ctx, const ato_cli_command_t *def,
   ato_cli_core_register(&ctx->cli, def, item, user_data);
 }
 
-void ato_cli_register_command_table(ato_cli_ctx_t *ctx, int nb_commands,
+void ato_cli_register_command_table(ato_cli_ctx_t *ctx,
                                     const ato_cli_command_t *const commands,
-                                    ato_cli_list_item_t *item,
+                                    int nb_commands, ato_cli_list_item_t *item,
                                     void *user_data) {
   for (int i = 0; i < nb_commands; i++) {
     ato_cli_register_command(ctx, &commands[i], &item[i], user_data);

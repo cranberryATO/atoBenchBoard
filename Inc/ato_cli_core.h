@@ -200,6 +200,12 @@ typedef struct {
 // Command table definition (use in the .c, after the parameter tables)
 #define ATO_CLI_TABLE(table, list)                                             \
   static const ato_cli_command_t table[] = {list(ATO_CLI_X_DEF)}
+#define ATO_CLI_REGISTER_TABLE(cli, table, items, user_data)                   \
+  do {                                                                         \
+    _Static_assert(COUNT_OF(table) == COUNT_OF(items), "items size");          \
+    ato_cli_register_command_table((cli), (table), COUNT_OF(table),            \
+                                   (items), (user_data));                      \
+  } while (0)
 
 /** Element of the per-interpreter list of registered commands. */
 typedef struct ato_cli_list_item {
