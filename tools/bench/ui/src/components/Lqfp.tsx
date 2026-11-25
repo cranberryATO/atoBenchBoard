@@ -142,7 +142,7 @@ export function Lqfp({ gpio, selected, onSelect }: Props) {
   return (
     <svg
       viewBox={`0 0 ${SIZE} ${SIZE}`}
-      className="h-auto w-full max-w-[760px] select-none"
+      className="h-auto w-full max-w-190 select-none"
       role="img"
       aria-label={`${pinout.mcu} ${pinout.package} pinout`}
     >
